@@ -108,13 +108,95 @@ class GovCAApprovalBot:
         self.check_cancelled()
         WebDriverWait(self.driver, timeout).until(page_is_ready)
 
-    def wait_for_table_loaded(self, timeout=30):
+    def _get_table_state(self):
+        """Capture current table state for change detection"""
+        script = """
+        var state = {
+            processing_visible: false,
+            row_count: 0,
+            first_row_text: '',
+            empty_indicator: false
+        };
+
+        // Check processing indicator
+        var processing = document.querySelector('.dataTables_processing');
+        if (processing) {
+            var style = window.getComputedStyle(processing);
+            state.processing_visible = (style.display !== 'none' && style.visibility !== 'hidden');
+        }
+
+        // Count tbody rows
+        var rows = document.querySelectorAll('#tblUser tbody tr');
+        state.row_count = rows.length;
+
+        // Get first row text for fingerprint
+        if (rows.length > 0) {
+            state.first_row_text = rows[0].innerText.substring(0, 100);
+        }
+
+        // Check for empty indicator
+        var emptyCell = document.querySelector('.dataTables_empty, td.dataTables_empty');
+        if (emptyCell && emptyCell.offsetParent !== null) {
+            state.empty_indicator = true;
+        }
+
+        return JSON.stringify(state);
+        """
+        try:
+            return self.driver.execute_script(script)
+        except:
+            return None
+
+    def wait_for_table_loaded(self, timeout=30, previous_state=None):
         """
         Wait for the search results table to finish loading.
-        Returns True when data rows are present, False when table is empty.
+
+        Args:
+            timeout: Maximum seconds to wait
+            previous_state: If provided, wait for table state to change first
+                           (ensures search has actually started)
+
+        Returns:
+            True when data rows are present, False when table is empty.
         """
-        # Phase 1: Wait for AJAX to start (brief delay so old data clears)
-        time.sleep(1)
+        self.log("Waiting for search results to load...")
+        self.check_cancelled()
+
+        # Phase 1: If previous_state provided, wait for table state to CHANGE
+        # This ensures the search has actually started before checking results
+        if previous_state is not None:
+            phase1_timeout = min(10, timeout // 2)
+            start_time = time.time()
+            state_changed = False
+
+            while time.time() - start_time < phase1_timeout:
+                self.check_cancelled()
+                current_state = self._get_table_state()
+
+                # Check if state has changed from previous
+                if current_state != previous_state:
+                    self.log("Detected table state change (search started)")
+                    state_changed = True
+                    break
+
+                # Also check if loading indicator appeared (clear sign search started)
+                loading_visible = self.driver.execute_script("""
+                    var processing = document.querySelector('.dataTables_processing');
+                    if (processing) {
+                        var style = window.getComputedStyle(processing);
+                        return (style.display !== 'none' && style.visibility !== 'hidden');
+                    }
+                    return (typeof jQuery !== 'undefined' && jQuery.active > 0);
+                """)
+                if loading_visible:
+                    self.log("Detected loading indicator (search started)")
+                    state_changed = True
+                    break
+
+                time.sleep(0.3)
+
+            if not state_changed:
+                self.log("No state change detected, continuing to wait...", "WARNING")
 
         def table_is_ready(driver):
             script = """
@@ -132,11 +214,10 @@ class GovCAApprovalBot:
                 return null;  // AJAX still running
             }
 
-            // Try multiple checkbox selectors (GovCA may use different names)
+            // Only check for checkboxes in data rows, not header checkbox
             var checkboxSelectors = [
-                'input[type="checkbox"][name="chkBatch"]',
-                'input[type="checkbox"][name*="chk"]',
-                'table tbody input[type="checkbox"]'
+                '#tblUser tbody input[type="checkbox"][name="chkBatch"]',
+                '#tblUser tbody input[type="checkbox"]'
             ];
 
             for (var i = 0; i < checkboxSelectors.length; i++) {
@@ -171,21 +252,54 @@ class GovCAApprovalBot:
             """
             return driver.execute_script(script)
 
-        self.log("Waiting for search results to load...")
-        self.check_cancelled()
-
+        # Phase 2: Wait for table to finish loading
         try:
             WebDriverWait(self.driver, timeout).until(
                 lambda d: table_is_ready(d) is not None
             )
-            final_result = table_is_ready(self.driver)
+            initial_result = table_is_ready(self.driver)
 
-            if final_result == 'has_data':
-                self.log("Search results loaded", "SUCCESS")
-                return True
-            else:
+            # Phase 3: Stability check - verify result doesn't change
+            # This catches delayed DOM rendering after AJAX completes
+            if initial_result == 'empty':
+                self.log("Initial result: empty, verifying stability...")
+                stability_checks = 3
+                check_interval = 0.5  # seconds
+
+                for i in range(stability_checks):
+                    time.sleep(check_interval)
+                    self.check_cancelled()
+                    current_result = table_is_ready(self.driver)
+
+                    if current_result == 'has_data':
+                        self.log("Data appeared after stability check", "SUCCESS")
+                        return True
+
+                    # Also check for loading indicator reappearing
+                    loading_visible = self.driver.execute_script("""
+                        var processing = document.querySelector('.dataTables_processing');
+                        if (processing) {
+                            var style = window.getComputedStyle(processing);
+                            return (style.display !== 'none' && style.visibility !== 'hidden');
+                        }
+                        return (typeof jQuery !== 'undefined' && jQuery.active > 0);
+                    """)
+                    if loading_visible:
+                        self.log("Loading restarted, waiting again...")
+                        remaining_timeout = timeout - ((i + 1) * check_interval)
+                        if remaining_timeout > 0:
+                            # Continue waiting for loading to complete
+                            time.sleep(0.5)
+                            continue
+
+                # After stability checks, result is confirmed empty
                 self.log("Table loaded (no data)", "INFO")
                 return False
+
+            # Result is 'has_data'
+            self.log("Search results loaded", "SUCCESS")
+            return True
+
         except TimeoutException:
             self.log(f"Table did not load within {timeout} seconds", "WARNING")
             return False
@@ -520,13 +634,17 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             self.check_cancelled()
 
+            # Capture current table state before clicking search
+            # This allows us to detect when the search actually starts
+            previous_state = self._get_table_state()
+
             # Click Search button
             search_button = self.driver.find_element(By.ID, "btnSearch")
             search_button.click()
             self.log("Search button clicked", "SUCCESS")
 
-            # Wait for table to load using event-driven detection
-            if self.wait_for_table_loaded(timeout=30):
+            # Wait for table to load, passing previous state for change detection
+            if self.wait_for_table_loaded(timeout=30, previous_state=previous_state):
                 # Count the checkboxes (table has data)
                 checkboxes = self.driver.find_elements(
                     By.CSS_SELECTOR, "#tblUser tbody input[type='checkbox'][name='chkBatch']"
