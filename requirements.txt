@@ -1,0 +1,16 @@
+# GovCA Approval Automation GUI - Dependencies
+
+# GUI Framework
+customtkinter>=5.2.0
+
+# Image handling for icons
+Pillow>=10.0.0
+
+# Browser automation
+selenium>=4.15.0
+
+# Sleep prevention during long operations
+wakepy>=0.8.0
+
+# For packaging (development only)
+# pyinstaller>=6.0.0
