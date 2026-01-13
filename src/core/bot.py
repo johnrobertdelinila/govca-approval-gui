@@ -113,6 +113,9 @@ class GovCAApprovalBot:
         Wait for the search results table to finish loading.
         Returns True when data rows are present, False when table is empty.
         """
+        # Phase 1: Wait for AJAX to start (brief delay so old data clears)
+        time.sleep(1)
+
         def table_is_ready(driver):
             script = """
             // Check if any loading indicator is visible
@@ -124,51 +127,47 @@ class GovCAApprovalBot:
                 }
             }
 
+            // Check for jQuery AJAX in progress
+            if (typeof jQuery !== 'undefined' && jQuery.active > 0) {
+                return null;  // AJAX still running
+            }
+
             // Try multiple checkbox selectors (GovCA may use different names)
             var checkboxSelectors = [
                 'input[type="checkbox"][name="chkBatch"]',
                 'input[type="checkbox"][name*="chk"]',
-                'table tbody input[type="checkbox"]',
-                'input.chkBatch',
-                '#tblUser input[type="checkbox"]'
+                'table tbody input[type="checkbox"]'
             ];
 
             for (var i = 0; i < checkboxSelectors.length; i++) {
                 var checkboxes = document.querySelectorAll(checkboxSelectors[i]);
-                if (checkboxes.length > 0) {
+                // Filter to only visible checkboxes
+                var visibleCount = 0;
+                for (var j = 0; j < checkboxes.length; j++) {
+                    if (checkboxes[j].offsetParent !== null) {
+                        visibleCount++;
+                    }
+                }
+                if (visibleCount > 0) {
                     return 'has_data';
                 }
             }
 
-            // Check for empty table indicators
-            var emptySelectors = [
-                '.dataTables_empty',
-                'td.dataTables_empty',
-                '.no-data'
-            ];
-
-            for (var i = 0; i < emptySelectors.length; i++) {
-                try {
-                    var empty = document.querySelector(emptySelectors[i]);
-                    if (empty && empty.offsetParent !== null) {
-                        return 'empty';
-                    }
-                } catch(e) {}
+            // Check for empty table indicators via text
+            var emptyText = document.body.innerText;
+            if (emptyText.includes('No data available') ||
+                emptyText.includes('No matching records') ||
+                emptyText.includes('No records found')) {
+                return 'empty';
             }
 
-            // Check if any table has loaded with rows
-            var tables = document.querySelectorAll('table tbody tr');
-            if (tables.length > 0) {
-                // Table has rows - check if they're data rows (not just headers)
-                for (var j = 0; j < tables.length; j++) {
-                    var cells = tables[j].querySelectorAll('td');
-                    if (cells.length > 0) {
-                        return 'has_data';
-                    }
-                }
+            // Check for DataTables empty class
+            var emptyCell = document.querySelector('.dataTables_empty, td.dataTables_empty');
+            if (emptyCell && emptyCell.offsetParent !== null) {
+                return 'empty';
             }
 
-            return null;  // Still loading or no table yet
+            return null;  // Still loading
             """
             return driver.execute_script(script)
 
@@ -189,15 +188,6 @@ class GovCAApprovalBot:
                 return False
         except TimeoutException:
             self.log(f"Table did not load within {timeout} seconds", "WARNING")
-            # Fallback: check for any checkboxes anyway
-            try:
-                checkboxes = self.driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
-                visible = [cb for cb in checkboxes if cb.is_displayed()]
-                if len(visible) > 0:
-                    self.log(f"Fallback: Found {len(visible)} checkboxes", "INFO")
-                    return True
-            except:
-                pass
             return False
 
     def _cleanup_profile_locks(self, profile_path):
