@@ -110,53 +110,67 @@ class GovCAApprovalBot:
 
     def wait_for_table_loaded(self, timeout=30):
         """
-        Wait for the DataTables table to finish loading.
+        Wait for the search results table to finish loading.
         Returns True when data rows are present, False when table is empty.
         """
         def table_is_ready(driver):
-            # JavaScript to check if DataTables has finished loading
             script = """
-            // Check if DataTables processing indicator is visible
+            // Check if any loading indicator is visible
             var processing = document.querySelector('.dataTables_processing');
-            if (processing && processing.style.display !== 'none') {
-                return null;  // Still loading
-            }
-
-            // Check for user table
-            var table = document.querySelector('#tblUser tbody');
-            if (!table) {
-                return null;  // Table not found yet
-            }
-
-            // Check for data rows (excluding header/empty rows)
-            var checkboxes = document.querySelectorAll('#tblUser tbody input[name="chkBatch"]');
-            if (checkboxes.length > 0) {
-                return 'has_data';
-            }
-
-            // Check for "no data" indicators
-            var emptyIndicators = [
-                '.dataTables_empty',
-                '#tblUser tbody tr td.dataTables_empty'
-            ];
-            for (var i = 0; i < emptyIndicators.length; i++) {
-                var empty = document.querySelector(emptyIndicators[i]);
-                if (empty) {
-                    return 'empty';
+            if (processing) {
+                var style = window.getComputedStyle(processing);
+                if (style.display !== 'none' && style.visibility !== 'hidden') {
+                    return null;  // Still loading
                 }
             }
 
-            // Check if table body has any rows at all
-            var rows = table.querySelectorAll('tr');
-            if (rows.length === 0) {
-                return null;  // No rows yet, still loading
+            // Try multiple checkbox selectors (GovCA may use different names)
+            var checkboxSelectors = [
+                'input[type="checkbox"][name="chkBatch"]',
+                'input[type="checkbox"][name*="chk"]',
+                'table tbody input[type="checkbox"]',
+                'input.chkBatch',
+                '#tblUser input[type="checkbox"]'
+            ];
+
+            for (var i = 0; i < checkboxSelectors.length; i++) {
+                var checkboxes = document.querySelectorAll(checkboxSelectors[i]);
+                if (checkboxes.length > 0) {
+                    return 'has_data';
+                }
             }
 
-            // Table has rows but no checkboxes - could be empty or different structure
-            return 'empty';
+            // Check for empty table indicators
+            var emptySelectors = [
+                '.dataTables_empty',
+                'td.dataTables_empty',
+                '.no-data'
+            ];
+
+            for (var i = 0; i < emptySelectors.length; i++) {
+                try {
+                    var empty = document.querySelector(emptySelectors[i]);
+                    if (empty && empty.offsetParent !== null) {
+                        return 'empty';
+                    }
+                } catch(e) {}
+            }
+
+            // Check if any table has loaded with rows
+            var tables = document.querySelectorAll('table tbody tr');
+            if (tables.length > 0) {
+                // Table has rows - check if they're data rows (not just headers)
+                for (var j = 0; j < tables.length; j++) {
+                    var cells = tables[j].querySelectorAll('td');
+                    if (cells.length > 0) {
+                        return 'has_data';
+                    }
+                }
+            }
+
+            return null;  // Still loading or no table yet
             """
-            result = driver.execute_script(script)
-            return result  # Returns 'has_data', 'empty', or None (still loading)
+            return driver.execute_script(script)
 
         self.log("Waiting for search results to load...")
         self.check_cancelled()
@@ -175,6 +189,15 @@ class GovCAApprovalBot:
                 return False
         except TimeoutException:
             self.log(f"Table did not load within {timeout} seconds", "WARNING")
+            # Fallback: check for any checkboxes anyway
+            try:
+                checkboxes = self.driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
+                visible = [cb for cb in checkboxes if cb.is_displayed()]
+                if len(visible) > 0:
+                    self.log(f"Fallback: Found {len(visible)} checkboxes", "INFO")
+                    return True
+            except:
+                pass
             return False
 
     def _cleanup_profile_locks(self, profile_path):
