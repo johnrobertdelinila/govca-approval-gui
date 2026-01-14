@@ -113,8 +113,8 @@ class GovCAApprovalBot:
         script = """
         var state = {
             processing_visible: false,
-            row_count: 0,
-            first_row_text: '',
+            checkbox_count: 0,
+            first_checkbox_id: '',
             empty_indicator: false
         };
 
@@ -125,13 +125,13 @@ class GovCAApprovalBot:
             state.processing_visible = (style.display !== 'none' && style.visibility !== 'hidden');
         }
 
-        // Count tbody rows
-        var rows = document.querySelectorAll('#tblUser tbody tr');
-        state.row_count = rows.length;
+        // Count checkboxes with class chkBatch (matches actual HTML structure)
+        var checkboxes = document.querySelectorAll('input.chkBatch[name="chkBatch"]');
+        state.checkbox_count = checkboxes.length;
 
-        // Get first row text for fingerprint
-        if (rows.length > 0) {
-            state.first_row_text = rows[0].innerText.substring(0, 100);
+        // Get first checkbox ID for fingerprint
+        if (checkboxes.length > 0) {
+            state.first_checkbox_id = checkboxes[0].id || '';
         }
 
         // Check for empty indicator
@@ -200,7 +200,12 @@ class GovCAApprovalBot:
 
         def table_is_ready(driver):
             script = """
-            // Check if any loading indicator is visible
+            // Ensure document and body are available (page may be transitioning)
+            if (!document || !document.body) {
+                return null;  // Still loading/transitioning
+            }
+
+            // FIRST: Check for loading indicators - if loading, wait
             var processing = document.querySelector('.dataTables_processing');
             if (processing) {
                 var style = window.getComputedStyle(processing);
@@ -209,48 +214,46 @@ class GovCAApprovalBot:
                 }
             }
 
-            // Check for jQuery AJAX in progress
             if (typeof jQuery !== 'undefined' && jQuery.active > 0) {
                 return null;  // AJAX still running
             }
 
-            // Only check for checkboxes in data rows, not header checkbox
-            var checkboxSelectors = [
-                '#tblUser tbody input[type="checkbox"][name="chkBatch"]',
-                '#tblUser tbody input[type="checkbox"]'
-            ];
-
-            for (var i = 0; i < checkboxSelectors.length; i++) {
-                var checkboxes = document.querySelectorAll(checkboxSelectors[i]);
-                // Filter to only visible checkboxes
-                var visibleCount = 0;
-                for (var j = 0; j < checkboxes.length; j++) {
-                    if (checkboxes[j].offsetParent !== null) {
-                        visibleCount++;
-                    }
-                }
-                if (visibleCount > 0) {
-                    return 'has_data';
+            // SECOND: Check for the EXACT checkboxes that search_pending_users will count
+            // Use class selector which matches the actual HTML: <input class="chkBatch" name="chkBatch" ...>
+            var checkboxes = document.querySelectorAll('input.chkBatch[name="chkBatch"]');
+            var visibleCount = 0;
+            for (var j = 0; j < checkboxes.length; j++) {
+                if (checkboxes[j].offsetParent !== null) {
+                    visibleCount++;
                 }
             }
+            if (visibleCount > 0) {
+                return 'has_data';  // Data found
+            }
 
-            // Check for empty table indicators via text
-            var emptyText = document.body.innerText;
+            // THIRD: Check for empty table indicators
+            var emptyText = document.body ? document.body.innerText : '';
             if (emptyText.includes('No data available') ||
                 emptyText.includes('No matching records') ||
-                emptyText.includes('No records found')) {
+                emptyText.includes('No records found') ||
+                emptyText.includes('Records not found')) {
                 return 'empty';
             }
 
-            // Check for DataTables empty class
             var emptyCell = document.querySelector('.dataTables_empty, td.dataTables_empty');
             if (emptyCell && emptyCell.offsetParent !== null) {
                 return 'empty';
             }
 
-            return null;  // Still loading
+            return null;  // Still loading/initializing
             """
-            return driver.execute_script(script)
+            try:
+                return driver.execute_script(script)
+            except Exception as e:
+                # Handle cases where page is transitioning (document.body is null)
+                if "document.body is null" in str(e) or "can't access property" in str(e):
+                    return None  # Treat as still loading
+                raise
 
         # Phase 2: Wait for table to finish loading
         try:
@@ -646,8 +649,9 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             # Wait for table to load, passing previous state for change detection
             if self.wait_for_table_loaded(timeout=30, previous_state=previous_state):
                 # Count the checkboxes (table has data)
+                # Use class selector matching actual HTML: <input class="chkBatch" name="chkBatch" ...>
                 checkboxes = self.driver.find_elements(
-                    By.CSS_SELECTOR, "#tblUser tbody input[type='checkbox'][name='chkBatch']"
+                    By.CSS_SELECTOR, "input.chkBatch[name='chkBatch']"
                 )
                 visible_count = sum(1 for cb in checkboxes if cb.is_displayed() and cb.is_enabled())
 
@@ -1057,18 +1061,42 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 next_request_found = False
                 next_request_button = None
 
-                for poll_attempt in range(5):
+                # Debug: Log all buttons on page
+                try:
+                    all_buttons = self.driver.find_elements(By.XPATH, "//input[@type='button'] | //input[@type='submit'] | //button")
+                    button_values = []
+                    for btn in all_buttons[:10]:  # Limit to first 10
+                        try:
+                            val = btn.get_attribute('value') or btn.text or btn.get_attribute('id')
+                            if val:
+                                button_values.append(val)
+                        except:
+                            pass
+                    if button_values:
+                        self.log(f"Buttons on page: {', '.join(button_values)}", "DEBUG")
+                except:
+                    pass
+
+                for poll_attempt in range(8):  # Increased from 5 to 8
                     self.check_cancelled()
                     try:
                         candidates = []
+                        # Multiple selector variations for "Next Request" button
                         candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='Next Request']"))
                         candidates.extend(self.driver.find_elements(By.XPATH, "//input[contains(@value, 'Next')][@type='button']"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//input[contains(@value, 'Next')][@type='submit']"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Next')]"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//input[contains(@value, 'Continue')]"))
+                        candidates.extend(self.driver.find_elements(By.ID, "btnNext"))
+                        candidates.extend(self.driver.find_elements(By.ID, "btnNextRequest"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'Next')]"))
 
                         for candidate in candidates:
                             try:
                                 if candidate.is_displayed() and candidate.is_enabled():
                                     next_request_button = candidate
                                     next_request_found = True
+                                    self.log(f"Found next button: {candidate.get_attribute('value') or candidate.text}", "DEBUG")
                                     break
                             except:
                                 continue
@@ -1076,11 +1104,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         if next_request_found:
                             break
 
-                        if poll_attempt < 4:
-                            time.sleep(3)
+                        if poll_attempt < 7:
+                            time.sleep(2)  # Wait between polls
                     except:
-                        if poll_attempt < 4:
-                            time.sleep(3)
+                        if poll_attempt < 7:
+                            time.sleep(2)
 
                 if next_request_found and next_request_button:
                     self.log("Found Next Request button - clicking...")
@@ -1659,10 +1687,15 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             time.sleep(1)
 
+            # Capture table state before search
+            previous_state = self._get_table_state()
+
             # Click search
             search_button = self.driver.find_element(By.ID, "btnSearch")
             search_button.click()
-            time.sleep(5)
+
+            # Wait for filtered results to load
+            self.wait_for_table_loaded(timeout=30, previous_state=previous_state)
 
         except Exception as e:
             self.log(f"Error searching: {e}", "ERROR")
@@ -1751,9 +1784,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         select.select_by_visible_text("Revoke Certificate")
 
                 time.sleep(1)
+                previous_state = self._get_table_state()
                 search_button = self.driver.find_element(By.ID, "btnSearch")
                 search_button.click()
-                time.sleep(5)
+                self.wait_for_table_loaded(timeout=30, previous_state=previous_state)
             except:
                 pass
 
