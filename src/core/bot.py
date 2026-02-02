@@ -427,17 +427,43 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.driver = webdriver.Firefox(options=options)
 
             self.wait = WebDriverWait(self.driver, 30)
-            self.driver.maximize_window()
+
+            # Give browser a moment to stabilize before maximizing
+            time.sleep(1)
+
+            # Verify browser is still alive before maximizing
+            try:
+                _ = self.driver.current_url  # Test if browser context is valid
+                self.driver.maximize_window()
+            except Exception as max_err:
+                # Browser may have closed (certificate dialog dismissed, etc.)
+                self.log(f"Browser window unavailable: {max_err}", "WARNING")
+                self.log("Browser may have closed unexpectedly. Retrying...", "WARNING")
+                # Clean up and raise to trigger retry at higher level
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
+                raise Exception("Browser closed unexpectedly after start. Please ensure Firefox is not already running and try again.")
+
             self.log("Firefox started successfully", "SUCCESS")
             # Allow PKCS#11 module and hardware token to fully initialize
             self.log("Waiting for SafeNet eToken to initialize...")
             time.sleep(3)
 
         except Exception as e:
+            error_msg = str(e)
             self.log(f"Error starting Firefox: {e}", "ERROR")
-            self.log("Troubleshooting:", "INFO")
-            self.log("1. Close Firefox if open", "INFO")
-            self.log("2. Ensure geckodriver is installed", "INFO")
+            if "Browsing context has been discarded" in error_msg or "Browser closed unexpectedly" in error_msg:
+                self.log("Troubleshooting:", "INFO")
+                self.log("1. Close ALL Firefox windows completely", "INFO")
+                self.log("2. Wait a few seconds and try again", "INFO")
+                self.log("3. If using eToken, ensure it is properly connected", "INFO")
+            else:
+                self.log("Troubleshooting:", "INFO")
+                self.log("1. Close Firefox if open", "INFO")
+                self.log("2. Ensure geckodriver is installed", "INFO")
             raise
 
     def navigate_to_govca(self):
@@ -1299,6 +1325,203 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
         return None
 
+    def _get_user_dropdown_state(self):
+        """Capture current user dropdown state for change detection"""
+        script = """
+        var state = {
+            option_count: 0,
+            first_option_text: '',
+            ajax_active: false
+        };
+
+        // Check AJAX status
+        if (typeof jQuery !== 'undefined' && jQuery.active > 0) {
+            state.ajax_active = true;
+        }
+
+        // Find user dropdown (multiple possible IDs)
+        var dropdown = document.getElementById('cboUGAvUser') ||
+                       document.querySelector("select[name*='AvUser' i]") ||
+                       document.querySelector("select[name*='user' i]");
+
+        if (dropdown) {
+            state.option_count = dropdown.options.length;
+            if (dropdown.options.length > 0) {
+                state.first_option_text = dropdown.options[0].text || '';
+            }
+        }
+
+        return JSON.stringify(state);
+        """
+        try:
+            return self.driver.execute_script(script)
+        except:
+            return None
+
+    def _wait_for_user_dropdown_loaded(self, timeout=60, previous_state=None):
+        """
+        Wait for user dropdown to finish loading via AJAX.
+        Uses 3-phase strategy: detect start, wait completion, verify stability.
+
+        Args:
+            timeout: Maximum seconds to wait
+            previous_state: State captured before group selection (for change detection)
+
+        Returns the dropdown element when ready, or None if timeout.
+        """
+        start_time = time.time()
+
+        # Phase 1: Wait for AJAX to START (state change detection)
+        if previous_state is not None:
+            phase1_timeout = min(10, timeout // 3)
+            self.log("Phase 1: Waiting for AJAX to start...")
+            ajax_started = False
+
+            while time.time() - start_time < phase1_timeout:
+                self.check_cancelled()
+                current_state = self._get_user_dropdown_state()
+
+                # Check if state changed (AJAX started or completed)
+                if current_state != previous_state:
+                    self.log("Detected dropdown state change")
+                    ajax_started = True
+                    break
+
+                # Check if AJAX is active
+                try:
+                    ajax_active = self.driver.execute_script("""
+                        return (typeof jQuery !== 'undefined' && jQuery.active > 0);
+                    """)
+                    if ajax_active:
+                        self.log("Detected active AJAX request")
+                        ajax_started = True
+                        break
+                except:
+                    pass
+
+                time.sleep(0.3)
+
+            if not ajax_started:
+                self.log("No AJAX detected, checking if data already present...", "WARNING")
+
+        # Phase 2: Wait for AJAX to COMPLETE
+        self.log("Phase 2: Waiting for AJAX to complete...")
+        phase2_start = time.time()
+        phase2_timeout = timeout - (phase2_start - start_time)
+
+        while time.time() - phase2_start < phase2_timeout:
+            self.check_cancelled()
+
+            try:
+                ajax_active = self.driver.execute_script("""
+                    if (typeof jQuery !== 'undefined' && jQuery.active > 0) return true;
+                    if (typeof $ !== 'undefined' && $.active > 0) return true;
+                    return false;
+                """)
+            except:
+                ajax_active = False
+
+            if not ajax_active:
+                self.log("AJAX completed")
+                break
+
+            time.sleep(0.5)
+
+        # Phase 3: Verify dropdown has options with stability check
+        self.log("Phase 3: Verifying dropdown options...")
+        stability_checks = 3
+        check_interval = 1.0
+        last_count = -1
+        stable_count = 0
+        last_status_log = 0
+
+        remaining_timeout = timeout - (time.time() - start_time)
+        phase3_start = time.time()
+
+        while time.time() - phase3_start < remaining_timeout:
+            self.check_cancelled()
+
+            # First, check if AJAX is active and wait for it to complete
+            try:
+                ajax_active = self.driver.execute_script("""
+                    return (typeof jQuery !== 'undefined' && jQuery.active > 0);
+                """)
+            except:
+                ajax_active = False
+
+            if ajax_active:
+                # Wait for this AJAX request to complete
+                ajax_wait_start = time.time()
+                self.log("Waiting for AJAX request to complete...")
+
+                while time.time() - ajax_wait_start < 30:  # Wait up to 30s for AJAX
+                    self.check_cancelled()
+                    try:
+                        still_active = self.driver.execute_script("""
+                            return (typeof jQuery !== 'undefined' && jQuery.active > 0);
+                        """)
+                    except:
+                        still_active = False
+
+                    if not still_active:
+                        self.log("AJAX request completed")
+                        time.sleep(1)  # Brief delay for DOM to update
+                        break
+
+                    # Log progress every 5 seconds
+                    elapsed = int(time.time() - ajax_wait_start)
+                    if elapsed > 0 and elapsed % 5 == 0 and elapsed != last_status_log:
+                        self.log(f"Still waiting for AJAX... ({elapsed}s)")
+                        last_status_log = elapsed
+
+                    time.sleep(0.5)
+                else:
+                    self.log("AJAX taking too long, checking options anyway...", "WARNING")
+
+                stable_count = 0  # Reset stability after AJAX activity
+
+            # Now check dropdown options
+            dropdown = self._find_user_dropdown()
+            current_count = 0
+
+            if dropdown:
+                try:
+                    select = Select(dropdown)
+                    # Count valid options (non-empty)
+                    for opt in select.options:
+                        text = opt.text.strip() if opt.text else ""
+                        val = opt.get_attribute('value') or ""
+                        if text or val:
+                            current_count += 1
+                except:
+                    pass
+
+            # Log status periodically
+            elapsed_phase3 = time.time() - phase3_start
+            if elapsed_phase3 - last_status_log >= 5:
+                self.log(f"Dropdown has {current_count} option(s), waiting for stability...")
+                last_status_log = elapsed_phase3
+
+            if current_count > 0:
+                if current_count == last_count:
+                    stable_count += 1
+                    if stable_count >= stability_checks:
+                        self.log(f"Found {current_count} user(s) (stable)")
+                        return dropdown
+                else:
+                    stable_count = 1
+                    last_count = current_count
+                    self.log(f"Found {current_count} option(s), verifying stability...")
+            else:
+                # Reset if count is 0
+                stable_count = 0
+                last_count = -1
+
+            time.sleep(check_interval)
+
+        self.log("Timeout waiting for users", "WARNING")
+        return self._find_user_dropdown()
+
     def assign_users_to_group(self, group_value, group_name):
         """Assign all available users to a group in batches of 20"""
         self.check_cancelled()
@@ -1314,44 +1537,16 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 return 0
 
             group_select = Select(group_dropdown)
+
+            # Capture state BEFORE group selection
+            previous_state = self._get_user_dropdown_state()
+
             group_select.select_by_value(group_value)
             self.log(f"Selected group: {group_name}", "SUCCESS")
 
-            time.sleep(5)  # Reduced from 10
-            self.check_cancelled()
-
-            # Wait for user dropdown to populate (reduced wait time for faster processing)
-            max_wait = 15  # Reduced from 60
-            waited = 0
-            dropdown_found = False
-            while waited < max_wait:
-                self.check_cancelled()
-                try:
-                    user_dropdown = self._find_user_dropdown()
-                    if user_dropdown:
-                        dropdown_found = True
-                        user_select = Select(user_dropdown)
-                        # Count options with either value OR text
-                        valid_count = 0
-                        for opt in user_select.options:
-                            text = opt.text.strip() if opt.text else ""
-                            val = opt.get_attribute('value') or ""
-                            # Skip only if BOTH text and value are empty (placeholder)
-                            if not text and not val:
-                                continue
-                            valid_count += 1
-                        if valid_count > 0:
-                            break
-                        # Dropdown found but empty - give a few more seconds then move on
-                        if waited >= 5:
-                            break
-                except:
-                    pass
-                time.sleep(2)  # Reduced from 5
-                waited += 2
-
-            # Get user dropdown and count users
-            user_dropdown = self._find_user_dropdown()
+            # Wait for AJAX and user dropdown to load with state change detection
+            time.sleep(1)  # Brief wait for JavaScript event handlers
+            user_dropdown = self._wait_for_user_dropdown_loaded(timeout=60, previous_state=previous_state)
             if not user_dropdown:
                 self.log("Could not find user dropdown", "ERROR")
                 return 0
@@ -1457,13 +1652,16 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 assigned += batch_count
                 self.report_progress(assigned, total_users, f"Assigned {assigned}/{total_users} users")
 
-                # Re-select group
+                # Re-select group after batch
                 time.sleep(1)
+                previous_state = self._get_user_dropdown_state()
                 group_dropdown = self._find_group_dropdown()
                 if group_dropdown:
                     group_select = Select(group_dropdown)
                     group_select.select_by_value(group_value)
-                time.sleep(3)
+                time.sleep(1)
+                # Wait with state detection for next batch
+                user_dropdown = self._wait_for_user_dropdown_loaded(timeout=60, previous_state=previous_state)
 
             self.log(f"Assigned {assigned} user(s) to {group_name}", "SUCCESS")
             return assigned
@@ -1482,6 +1680,81 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 pass
             self.driver = None
 
+    def update_callbacks(self, log_callback=None, progress_callback=None, cancel_event=None):
+        """
+        Update callbacks on existing bot instance.
+        Allows reusing bot while updating GUI callbacks for new workflow.
+        """
+        if log_callback:
+            self.log_callback = log_callback
+        if progress_callback:
+            self.progress_callback = progress_callback
+        if cancel_event:
+            self.cancel_event = cancel_event
+
+    def is_session_valid(self):
+        """
+        Check if the current browser session is still valid and logged in.
+
+        Returns:
+            True if browser is responsive and logged into GovCA, False otherwise
+        """
+        if not self.driver:
+            return False
+
+        try:
+            # Test if browser is responsive
+            _ = self.driver.current_url
+
+            # Check if we're still on GovCA site
+            current_url = self.driver.current_url
+            if "govca.npki.gov.ph" not in current_url:
+                return False
+
+            # Check if domain dropdown exists (indicates logged in)
+            # This is a reliable indicator that authentication is still valid
+            try:
+                domain_dropdown = self.driver.find_element(By.ID, "selSwitchDomain")
+                if domain_dropdown.is_displayed():
+                    return True
+            except:
+                pass
+
+            return False
+
+        except Exception:
+            # Browser is not responsive or crashed
+            return False
+
+    def ensure_valid_session(self):
+        """
+        Ensure a valid GovCA session exists.
+
+        - If session is valid, reuse it
+        - If session is invalid, re-authenticate
+
+        Returns:
+            True if session is now valid, False if authentication failed
+        """
+        if self.is_session_valid():
+            self.log("Reusing existing browser session", "SUCCESS")
+            return True
+
+        # Session invalid - need to re-authenticate
+        self.log("Session expired or invalid, re-authenticating...")
+
+        # Close any existing dead browser
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
+            self.driver = None
+
+        # Setup new browser and authenticate
+        self.setup_browser()
+        return self.navigate_to_govca()
+
     # ==================== WORKFLOW METHODS ====================
 
     def run_approval_process(self, domain="NCR00Sign", comment="Approved via automation",
@@ -1494,9 +1767,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log("GovCA Approval Automation - Add User")
             self.log("=" * 50)
 
-            self.setup_browser()
-
-            if not self.navigate_to_govca():
+            # Use session persistence - reuse existing session or re-authenticate
+            if not self.ensure_valid_session():
                 self.log("Failed to connect", "ERROR")
                 return False
 
@@ -1622,9 +1894,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log("GovCA Approval Automation - Revoke Certificate")
             self.log("=" * 50)
 
-            self.setup_browser()
-
-            if not self.navigate_to_govca():
+            # Use session persistence - reuse existing session or re-authenticate
+            if not self.ensure_valid_session():
                 return False
 
             # Process primary domain
@@ -1811,9 +2082,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if not WAKEPY_AVAILABLE:
                     self.log("wakepy not installed - computer may sleep during long operations", "WARNING")
 
-                self.setup_browser()
-
-                if not self.navigate_to_govca():
+                # Use session persistence - reuse existing session or re-authenticate
+                if not self.ensure_valid_session():
                     return False
 
                 if not self.select_domain(domain):
@@ -1869,9 +2139,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     self.log("wakepy not installed - computer may sleep during long operations", "WARNING")
                     self.log("Install with: pip install wakepy", "INFO")
 
-                self.setup_browser()
-
-                if not self.navigate_to_govca():
+                # Use session persistence - reuse existing session or re-authenticate
+                if not self.ensure_valid_session():
                     return False
 
                 # Get all domains
