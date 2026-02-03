@@ -793,7 +793,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             row = cb.find_element(By.XPATH, "./ancestor::tr[1]")
                             cells = row.find_elements(By.XPATH, "./td")
                             if 3 <= len(cells) <= 15:
-                                for cell in cells[1:4]:
+                                for cell in cells[1:6]:  # Check more cells
                                     cell_text = cell.text.strip()
                                     if cell_text and '_' in cell_text and len(cell_text) < 100:
                                         page_usernames.append(cell_text)
@@ -802,6 +802,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             continue
                 except:
                     pass
+
+                # Log some sample usernames for debugging
+                if page_usernames and current_page == 1:
+                    sample = page_usernames[:5]
+                    self.log(f"Sample usernames on page: {', '.join(sample)}", "DEBUG")
 
                 # Check for matches
                 matches_on_page = [u for u in page_usernames if u in usernames]
@@ -852,20 +857,27 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         except:
                             continue
 
-                    break
+                    # Check if all users found - if so, we're done with selection
+                    if len(not_found_users) == 0:
+                        self.log("All target users have been found!", "SUCCESS")
+                        break
                 else:
-                    self.log(f"No matching users on page {current_page}", "WARNING")
+                    self.log(f"No matching users on page {current_page}", "INFO")
 
+                # Always try to go to next page if there are still users to find
+                if len(not_found_users) > 0:
                     if self.has_next_page():
                         if self.go_to_next_page():
                             current_page += 1
                             continue
                         else:
-                            self.log("Failed to navigate to next page", "ERROR")
+                            self.log("Failed to navigate to next page", "WARNING")
                             break
                     else:
                         self.log("No more pages to check", "INFO")
                         break
+                else:
+                    break
 
             if not_found_users and selected_count == 0:
                 self.log(f"Users not found: {', '.join(sorted(list(not_found_users)[:10]))}", "WARNING")
@@ -884,30 +896,148 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
     def has_next_page(self):
         """Check if there's a Next page button"""
         try:
-            next_btn = self.driver.find_element(By.XPATH, "//a[.//img[contains(@src, 'next_page')]]")
-            return next_btn.is_displayed()
-        except:
+            # Scroll to bottom of page to reveal pagination controls
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+
+            # Try multiple selectors for pagination
+            next_selectors = [
+                "//a[.//img[contains(@src, 'next_page')]]",
+                "//a[.//img[contains(@src, 'next')]]",
+                "//a[.//img[contains(@src, 'Next')]]",
+                "//a[contains(@href, 'page') and contains(text(), 'Next')]",
+                "//a[contains(text(), 'Next')]",
+                "//a[contains(text(), '>>')]",
+                "//a[text()='>']",
+                "//input[@type='button' and contains(@value, 'Next')]",
+                "//button[contains(text(), 'Next')]",
+                "//a[contains(@class, 'next')]",
+                "//a[contains(@class, 'Next')]",
+                "//a[contains(@onclick, 'next')]",
+                "//a[contains(@onclick, 'Next')]",
+                "//a[contains(@onclick, 'page')]",
+                "//img[contains(@src, 'next')]/..",
+                "//img[contains(@src, 'Next')]/..",
+                "//a[contains(@title, 'Next')]",
+                "//a[contains(@title, 'next')]",
+                "//span[contains(@class, 'next')]/a",
+                "//td[contains(@class, 'pag')]//a[contains(text(), '>')]",
+                "//div[contains(@class, 'pag')]//a[contains(text(), '>')]",
+            ]
+
+            for selector in next_selectors:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, selector)
+                    for elem in elements:
+                        if elem.is_displayed() and elem.is_enabled():
+                            self.log(f"Found pagination element: {selector}", "DEBUG")
+                            return True
+                except:
+                    continue
+
+            # Also check for page number links (e.g., if we're on page 1 and page 2 exists)
+            try:
+                page_links = self.driver.find_elements(By.XPATH, "//a[contains(@href, 'page=2') or contains(@onclick, 'page') or contains(@onclick, '(2)')]")
+                for link in page_links:
+                    if link.is_displayed():
+                        self.log("Found page 2 link", "DEBUG")
+                        return True
+            except:
+                pass
+
+            # Check for numbered pagination links
+            try:
+                numbered_pages = self.driver.find_elements(By.XPATH, "//a[string-length(text()) <= 3 and number(text()) > 1]")
+                for link in numbered_pages:
+                    if link.is_displayed():
+                        link_text = link.text.strip()
+                        if link_text.isdigit() and int(link_text) > 1:
+                            self.log(f"Found page {link_text} link", "DEBUG")
+                            return True
+            except:
+                pass
+
+            # Debug: log all links that might be pagination
+            try:
+                all_links = self.driver.find_elements(By.TAG_NAME, "a")
+                pagination_hints = []
+                for link in all_links[-20:]:  # Check last 20 links (likely at bottom)
+                    try:
+                        href = link.get_attribute('href') or ''
+                        onclick = link.get_attribute('onclick') or ''
+                        text = link.text.strip()
+                        if 'page' in href.lower() or 'page' in onclick.lower() or text in ['>', '>>', 'Next', '2', '3']:
+                            pagination_hints.append(f"'{text}' (href={href[:50] if href else 'none'})")
+                    except:
+                        continue
+                if pagination_hints:
+                    self.log(f"Potential pagination links: {', '.join(pagination_hints[:5])}", "DEBUG")
+            except:
+                pass
+
+            self.log("No pagination controls found", "DEBUG")
+            return False
+        except Exception as e:
+            self.log(f"Error checking pagination: {e}", "DEBUG")
             return False
 
     def go_to_next_page(self):
         """Navigate to next page by clicking the pagination button"""
         try:
-            next_btn = self.driver.find_element(By.XPATH, "//a[.//img[contains(@src, 'next_page')]]")
-            if not next_btn.is_displayed():
+            next_btn = None
+
+            # Try multiple selectors for the next button
+            next_selectors = [
+                "//a[.//img[contains(@src, 'next_page')]]",
+                "//a[.//img[contains(@src, 'next')]]",
+                "//a[contains(@href, 'page') and contains(text(), 'Next')]",
+                "//a[contains(text(), 'Next')]",
+                "//a[contains(text(), '>>')]",
+                "//input[@type='button' and contains(@value, 'Next')]",
+                "//button[contains(text(), 'Next')]",
+                "//a[contains(@class, 'next')]",
+                "//a[contains(@onclick, 'next')]",
+                "//img[contains(@src, 'next')]/..",
+                "//a[contains(@title, 'Next')]",
+            ]
+
+            for selector in next_selectors:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, selector)
+                    for elem in elements:
+                        if elem.is_displayed() and elem.is_enabled():
+                            next_btn = elem
+                            self.log(f"Using pagination: {selector}", "DEBUG")
+                            break
+                    if next_btn:
+                        break
+                except:
+                    continue
+
+            if not next_btn:
+                self.log("Could not find next page button", "WARNING")
                 return False
 
             # Scroll the button into view
             self.driver.execute_script("arguments[0].scrollIntoView(true);", next_btn)
             time.sleep(0.5)
 
-            # Use Selenium's native click
-            next_btn.click()
+            # Try JavaScript click first, then native click
+            try:
+                self.driver.execute_script("arguments[0].click();", next_btn)
+            except:
+                next_btn.click()
+
+            self.log("Clicked next page button", "SUCCESS")
             time.sleep(5)
 
             # Wait for page to be ready
-            WebDriverWait(self.driver, 10).until(
+            WebDriverWait(self.driver, 15).until(
                 lambda d: d.execute_script("return document.readyState") == "complete"
             )
+
+            # Wait for table to reload
+            time.sleep(3)
 
             return True
 
