@@ -932,15 +932,24 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         except:
                             continue
 
-                    # Check if all users found - if so, we're done with selection
+                    # IMPORTANT: After selecting users on this page, RETURN immediately
+                    # so they can be batch processed. Navigating to next page would LOSE
+                    # the checkbox selections from this page!
+                    if selected_count > 0:
+                        self.log(f"Selected {selected_count} user(s) on page {current_page} - ready for batch processing", "SUCCESS")
+                        # Return now - caller will process these, then call again for remaining users
+                        break
+
+                    # Only check if all users found when none were selected on this page
                     if len(not_found_users) == 0:
                         self.log("All target users have been found!", "SUCCESS")
                         break
                 else:
                     self.log(f"No matching users on page {current_page}", "INFO")
 
-                # Always try to go to next page if there are still users to find
-                if len(not_found_users) > 0:
+                # Only go to next page if NO users were selected on current page
+                # (selections are lost when navigating, so we must process first)
+                if selected_count == 0 and len(not_found_users) > 0:
                     if self.has_next_page():
                         if self.go_to_next_page():
                             current_page += 1
@@ -2292,47 +2301,109 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 else:
                     return False
 
-            # Select users
+            # Select and approve users
+            total_approved = 0
+
             if specific_users:
                 suffix = "_Sign" if "Sign" in domain else "_Auth"
-                usernames_to_approve = [f"{user}{suffix}" for user in specific_users]
+                usernames_to_approve = set(f"{user}{suffix}" for user in specific_users)
                 self.log(f"Mode: Specific users - {len(usernames_to_approve)} target(s)")
-                selected, matched = self.select_specific_users(usernames_to_approve)
+
+                # Loop to process batches (since selections are lost on page navigation)
+                batch_number = 1
+                max_batches = 20  # Safety limit
+
+                while batch_number <= max_batches and usernames_to_approve:
+                    self.check_cancelled()
+                    self.log(f"--- Batch {batch_number}: {len(usernames_to_approve)} user(s) remaining ---")
+
+                    # Select users on current page
+                    selected, matched = self.select_specific_users(list(usernames_to_approve))
+
+                    if selected > 0:
+                        self.log(f"{selected} user(s) ready for approval (Batch {batch_number})", "SUCCESS")
+
+                        if self.approve_users(comment):
+                            total_approved += selected
+                            # Remove processed users from the list
+                            usernames_to_approve -= matched
+                            self.log(f"Batch {batch_number}: Approved {selected} users", "SUCCESS")
+
+                            if usernames_to_approve:
+                                # More users to process - navigate back to user list
+                                self.log(f"Remaining users: {len(usernames_to_approve)}")
+                                time.sleep(2)
+
+                                # Navigate back to search for more users
+                                if not self.navigate_to_user_list():
+                                    self.log("Failed to navigate back to User List", "ERROR")
+                                    break
+
+                                if not self.search_pending_users():
+                                    self.log("No more pending users found", "INFO")
+                                    break
+
+                                batch_number += 1
+                            else:
+                                self.log("All specified users have been processed!", "SUCCESS")
+                                break
+                        else:
+                            self.log(f"Batch {batch_number} approval failed", "ERROR")
+                            break
+                    else:
+                        self.log(f"No matching users found (Batch {batch_number})", "WARNING")
+                        break
+
             else:
                 self.log("Mode: All pending users")
                 selected = self.select_all_pending_users()
 
-            if selected > 0:
-                self.log(f"{selected} user(s) ready for approval", "SUCCESS")
+                if selected > 0:
+                    self.log(f"{selected} user(s) ready for approval", "SUCCESS")
 
-                if self.approve_users(comment):
-                    self.log(f"Successfully approved {selected} users in {domain}!", "SUCCESS")
+                    if self.approve_users(comment):
+                        total_approved = selected
 
-                    # Process counterpart
-                    if process_counterpart:
-                        counterpart = self.get_counterpart_domain(domain)
-                        if counterpart:
-                            self.log("=" * 50)
-                            self.log(f"Processing counterpart domain: {counterpart}")
-                            self.log("=" * 50)
+            if total_approved > 0:
+                self.log(f"Successfully approved {total_approved} users in {domain}!", "SUCCESS")
 
-                            if self.select_domain(counterpart):
-                                time.sleep(3)
-                                if self.navigate_to_user_list() and self.search_pending_users():
-                                    if specific_users:
-                                        suffix = "_Sign" if "Sign" in counterpart else "_Auth"
-                                        usernames = [f"{user}{suffix}" for user in specific_users]
-                                        sel, _ = self.select_specific_users(usernames)
-                                    else:
-                                        sel = self.select_all_pending_users()
+                # Process counterpart
+                if process_counterpart:
+                    counterpart = self.get_counterpart_domain(domain)
+                    if counterpart:
+                        self.log("=" * 50)
+                        self.log(f"Processing counterpart domain: {counterpart}")
+                        self.log("=" * 50)
 
+                        if self.select_domain(counterpart):
+                            time.sleep(3)
+                            if self.navigate_to_user_list() and self.search_pending_users():
+                                if specific_users:
+                                    suffix = "_Sign" if "Sign" in counterpart else "_Auth"
+                                    remaining = set(f"{user}{suffix}" for user in specific_users)
+
+                                    batch_number = 1
+                                    while batch_number <= 20 and remaining:
+                                        self.check_cancelled()
+                                        sel, matched = self.select_specific_users(list(remaining))
+                                        if sel > 0:
+                                            self.approve_users(comment)
+                                            remaining -= matched
+                                            if remaining:
+                                                time.sleep(2)
+                                                if not self.navigate_to_user_list() or not self.search_pending_users():
+                                                    break
+                                                batch_number += 1
+                                            else:
+                                                break
+                                        else:
+                                            break
+                                else:
+                                    sel = self.select_all_pending_users()
                                     if sel > 0:
                                         self.approve_users(comment)
 
-                    return True
-                else:
-                    self.log("Approval failed", "ERROR")
-                    return False
+                return True
             else:
                 self.log(f"No users selected in {domain}", "WARNING")
 
@@ -2421,47 +2492,109 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 else:
                     return False
 
-            # Select users (specific users only for rejection)
+            # Select and reject users
+            total_rejected = 0
+
             if specific_users:
                 suffix = "_Sign" if "Sign" in domain else "_Auth"
-                usernames_to_reject = [f"{user}{suffix}" for user in specific_users]
+                usernames_to_reject = set(f"{user}{suffix}" for user in specific_users)
                 self.log(f"Mode: Specific users for REJECTION - {len(usernames_to_reject)} target(s)")
-                selected, matched = self.select_specific_users(usernames_to_reject)
+
+                # Loop to process batches (since selections are lost on page navigation)
+                batch_number = 1
+                max_batches = 20  # Safety limit
+
+                while batch_number <= max_batches and usernames_to_reject:
+                    self.check_cancelled()
+                    self.log(f"--- Batch {batch_number}: {len(usernames_to_reject)} user(s) remaining ---")
+
+                    # Select users on current page
+                    selected, matched = self.select_specific_users(list(usernames_to_reject))
+
+                    if selected > 0:
+                        self.log(f"{selected} user(s) ready for REJECTION (Batch {batch_number})", "WARNING")
+
+                        if self.reject_users(comment):
+                            total_rejected += selected
+                            # Remove processed users from the list
+                            usernames_to_reject -= matched
+                            self.log(f"Batch {batch_number}: REJECTED {selected} users", "SUCCESS")
+
+                            if usernames_to_reject:
+                                # More users to process - navigate back to user list
+                                self.log(f"Remaining users: {len(usernames_to_reject)}")
+                                time.sleep(2)
+
+                                # Navigate back to search for more users
+                                if not self.navigate_to_user_list():
+                                    self.log("Failed to navigate back to User List", "ERROR")
+                                    break
+
+                                if not self.search_pending_users():
+                                    self.log("No more pending users found", "INFO")
+                                    break
+
+                                batch_number += 1
+                            else:
+                                self.log("All specified users have been processed!", "SUCCESS")
+                                break
+                        else:
+                            self.log(f"Batch {batch_number} rejection failed", "ERROR")
+                            break
+                    else:
+                        self.log(f"No matching users found (Batch {batch_number})", "WARNING")
+                        break
+
             else:
                 self.log("Mode: All pending users for REJECTION")
                 selected = self.select_all_pending_users()
 
-            if selected > 0:
-                self.log(f"{selected} user(s) ready for REJECTION", "WARNING")
+                if selected > 0:
+                    self.log(f"{selected} user(s) ready for REJECTION", "WARNING")
 
-                if self.reject_users(comment):
-                    self.log(f"Successfully REJECTED {selected} users in {domain}!", "SUCCESS")
+                    if self.reject_users(comment):
+                        total_rejected = selected
 
-                    # Process counterpart
-                    if process_counterpart:
-                        counterpart = self.get_counterpart_domain(domain)
-                        if counterpart:
-                            self.log("=" * 50)
-                            self.log(f"Processing counterpart domain for REJECTION: {counterpart}")
-                            self.log("=" * 50)
+            if total_rejected > 0:
+                self.log(f"Successfully REJECTED {total_rejected} users in {domain}!", "SUCCESS")
 
-                            if self.select_domain(counterpart):
-                                time.sleep(3)
-                                if self.navigate_to_user_list() and self.search_pending_users():
-                                    if specific_users:
-                                        suffix = "_Sign" if "Sign" in counterpart else "_Auth"
-                                        usernames = [f"{user}{suffix}" for user in specific_users]
-                                        sel, _ = self.select_specific_users(usernames)
-                                    else:
-                                        sel = self.select_all_pending_users()
+                # Process counterpart
+                if process_counterpart:
+                    counterpart = self.get_counterpart_domain(domain)
+                    if counterpart:
+                        self.log("=" * 50)
+                        self.log(f"Processing counterpart domain for REJECTION: {counterpart}")
+                        self.log("=" * 50)
 
+                        if self.select_domain(counterpart):
+                            time.sleep(3)
+                            if self.navigate_to_user_list() and self.search_pending_users():
+                                if specific_users:
+                                    suffix = "_Sign" if "Sign" in counterpart else "_Auth"
+                                    remaining = set(f"{user}{suffix}" for user in specific_users)
+
+                                    batch_number = 1
+                                    while batch_number <= 20 and remaining:
+                                        self.check_cancelled()
+                                        sel, matched = self.select_specific_users(list(remaining))
+                                        if sel > 0:
+                                            self.reject_users(comment)
+                                            remaining -= matched
+                                            if remaining:
+                                                time.sleep(2)
+                                                if not self.navigate_to_user_list() or not self.search_pending_users():
+                                                    break
+                                                batch_number += 1
+                                            else:
+                                                break
+                                        else:
+                                            break
+                                else:
+                                    sel = self.select_all_pending_users()
                                     if sel > 0:
                                         self.reject_users(comment)
 
-                    return True
-                else:
-                    self.log("Rejection failed", "ERROR")
-                    return False
+                return True
             else:
                 self.log(f"No users selected in {domain}", "WARNING")
 
