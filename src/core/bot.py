@@ -108,6 +108,51 @@ class GovCAApprovalBot:
         self.check_cancelled()
         WebDriverWait(self.driver, timeout).until(page_is_ready)
 
+    def _get_table_fingerprint(self):
+        """Get a fingerprint of the table content to detect when data actually changes"""
+        script = """
+        try {
+            var fingerprint = {
+                checkbox_count: 0,
+                first_row_text: '',
+                last_row_text: '',
+                total_text_length: 0
+            };
+
+            // Get all checkbox rows
+            var checkboxes = document.querySelectorAll('input.chkBatch[name="chkBatch"], input[type="checkbox"][name="chkBatch"]');
+            fingerprint.checkbox_count = checkboxes.length;
+
+            if (checkboxes.length > 0) {
+                // Get first row text
+                var firstRow = checkboxes[0].closest('tr');
+                if (firstRow) {
+                    fingerprint.first_row_text = firstRow.innerText.substring(0, 100);
+                }
+
+                // Get last row text
+                var lastRow = checkboxes[checkboxes.length - 1].closest('tr');
+                if (lastRow) {
+                    fingerprint.last_row_text = lastRow.innerText.substring(0, 100);
+                }
+            }
+
+            // Get total visible text length in table body
+            var tbody = document.querySelector('table tbody, .dataTable tbody');
+            if (tbody) {
+                fingerprint.total_text_length = tbody.innerText.length;
+            }
+
+            return JSON.stringify(fingerprint);
+        } catch(e) {
+            return null;
+        }
+        """
+        try:
+            return self.driver.execute_script(script)
+        except:
+            return None
+
     def _get_table_state(self):
         """Capture current table state for change detection"""
         script = """
@@ -264,44 +309,74 @@ class GovCAApprovalBot:
 
             # Phase 3: Stability check - verify result doesn't change
             # This catches delayed DOM rendering after AJAX completes
-            if initial_result == 'empty':
-                self.log("Initial result: empty, verifying stability...")
-                stability_checks = 3
-                check_interval = 0.5  # seconds
+            # IMPORTANT: Do stability check for BOTH 'empty' AND 'has_data'
+            self.log(f"Initial result: {initial_result}, verifying stability...")
+            stability_checks = 5  # Increased from 3
+            check_interval = 1.0  # Increased from 0.5 seconds
 
-                for i in range(stability_checks):
-                    time.sleep(check_interval)
-                    self.check_cancelled()
-                    current_result = table_is_ready(self.driver)
+            # Get initial table fingerprint for change detection
+            initial_fingerprint = self._get_table_fingerprint()
 
+            for i in range(stability_checks):
+                time.sleep(check_interval)
+                self.check_cancelled()
+
+                # Check for loading indicator reappearing
+                loading_visible = self.driver.execute_script("""
+                    var processing = document.querySelector('.dataTables_processing');
+                    if (processing) {
+                        var style = window.getComputedStyle(processing);
+                        return (style.display !== 'none' && style.visibility !== 'hidden');
+                    }
+                    return (typeof jQuery !== 'undefined' && jQuery.active > 0);
+                """)
+                if loading_visible:
+                    self.log(f"Loading indicator visible (check {i+1}/{stability_checks}), waiting...")
+                    continue
+
+                current_result = table_is_ready(self.driver)
+                current_fingerprint = self._get_table_fingerprint()
+
+                # Check if result changed
+                if current_result != initial_result:
+                    self.log(f"Result changed: {initial_result} -> {current_result}")
                     if current_result == 'has_data':
-                        self.log("Data appeared after stability check", "SUCCESS")
+                        # Wait additional time for data to fully render
+                        time.sleep(2)
+                        self.log("Search results loaded", "SUCCESS")
                         return True
+                    elif current_result == 'empty':
+                        continue  # Keep checking, might still be loading
+                    initial_result = current_result
 
-                    # Also check for loading indicator reappearing
-                    loading_visible = self.driver.execute_script("""
-                        var processing = document.querySelector('.dataTables_processing');
-                        if (processing) {
-                            var style = window.getComputedStyle(processing);
-                            return (style.display !== 'none' && style.visibility !== 'hidden');
-                        }
-                        return (typeof jQuery !== 'undefined' && jQuery.active > 0);
-                    """)
-                    if loading_visible:
-                        self.log("Loading restarted, waiting again...")
-                        remaining_timeout = timeout - ((i + 1) * check_interval)
-                        if remaining_timeout > 0:
-                            # Continue waiting for loading to complete
-                            time.sleep(0.5)
-                            continue
+                # Check if table data changed (fingerprint changed)
+                if current_fingerprint != initial_fingerprint:
+                    self.log(f"Table data changed (check {i+1}/{stability_checks})")
+                    initial_fingerprint = current_fingerprint
+                    # Data is still changing, reset stability counter
+                    continue
 
-                # After stability checks, result is confirmed empty
+            # Final check after stability period
+            final_result = table_is_ready(self.driver)
+
+            if final_result == 'has_data':
+                # Extra wait to ensure data is fully rendered
+                time.sleep(2)
+                self.log("Search results loaded", "SUCCESS")
+                return True
+            elif final_result == 'empty':
                 self.log("Table loaded (no data)", "INFO")
                 return False
-
-            # Result is 'has_data'
-            self.log("Search results loaded", "SUCCESS")
-            return True
+            else:
+                # Still loading after all checks - wait more
+                self.log("Table still loading, waiting additional time...")
+                time.sleep(5)
+                final_final = table_is_ready(self.driver)
+                if final_final == 'has_data':
+                    self.log("Search results loaded (delayed)", "SUCCESS")
+                    return True
+                self.log("Table loaded (no data after extended wait)", "INFO")
+                return False
 
         except TimeoutException:
             self.log(f"Table did not load within {timeout} seconds", "WARNING")
@@ -896,8 +971,23 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
     def has_next_page(self):
         """Check if there's a Next page button"""
         try:
+            # Wait for page to be ready before checking pagination
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    lambda d: d.execute_script("return document.readyState") == "complete"
+                )
+                WebDriverWait(self.driver, 5).until(
+                    lambda d: d.execute_script("return document.body !== null")
+                )
+            except:
+                self.log("Page not ready for pagination check, waiting...", "DEBUG")
+                time.sleep(3)
+
             # Scroll to bottom of page to reveal pagination controls
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            try:
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            except Exception as scroll_err:
+                self.log(f"Could not scroll: {scroll_err}", "DEBUG")
             time.sleep(2)
 
             # Try multiple selectors for pagination
