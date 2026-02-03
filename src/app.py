@@ -279,7 +279,7 @@ class GovCAApp(ctk.CTk):
         # Window setup
         self.title("GovCA Approval Automation")
         self.geometry("950x800")
-        self.minsize(800, 650)
+        self.minsize(800, 700)
 
         # State
         self.automation_thread = None
@@ -372,7 +372,7 @@ class GovCAApp(ctk.CTk):
 
         # Main container with padding
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        self.main_frame.pack(fill="both", expand=True, padx=16, pady=12)
 
         # Title Section
         self._create_title_section(self.main_frame)
@@ -380,29 +380,27 @@ class GovCAApp(ctk.CTk):
         # Workflow Selection Section
         self._create_workflow_section(self.main_frame)
 
-        # Create resizable paned window for config and log sections
+        # Bottom frame FIRST (so it reserves space at bottom for buttons)
+        bottom_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        bottom_frame.pack(fill="x", side="bottom", pady=(10, 0))
+
+        # Control Buttons and Progress (inside bottom_frame)
+        self._create_control_buttons(bottom_frame)
+        self._create_progress_section(bottom_frame)
+
+        # THEN the resizable paned window (fills remaining space)
         self.main_paned = ResizablePanedWindow(self.main_frame, orient=tk.VERTICAL)
         self.main_paned.pack(fill="both", expand=True, pady=(0, 10))
 
         # Configuration pane (upper)
         self.config_pane = ctk.CTkFrame(self.main_paned, fg_color=ColorPalette.get('bg_card'), corner_radius=12)
         self._create_config_section(self.config_pane)
-        self.main_paned.add(self.config_pane, minsize=120, height=220)
+        self.main_paned.add(self.config_pane, minsize=80, height=180)
 
         # Log/Animation pane (lower)
         self.log_pane = ctk.CTkFrame(self.main_paned, fg_color=ColorPalette.get('bg_card'), corner_radius=12)
         self._create_log_section(self.log_pane)
-        self.main_paned.add(self.log_pane, minsize=180, height=300)
-
-        # Bottom frame for progress and buttons (fixed at bottom)
-        bottom_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        bottom_frame.pack(fill="x", side="bottom", pady=(10, 0))
-
-        # Control Buttons
-        self._create_control_buttons(bottom_frame)
-
-        # Progress Section
-        self._create_progress_section(bottom_frame)
+        self.main_paned.add(self.log_pane, minsize=120, height=250)
 
         # Status Bar
         self._create_status_bar()

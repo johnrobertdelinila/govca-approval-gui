@@ -1304,11 +1304,73 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 # Check for completion
                 current_url = self.driver.current_url
 
+                # Check if on success/info page - look for continue button first
                 if "infoMsg" in current_url:
-                    self.log("Redirected to success page - batch complete", "SUCCESS")
-                    break
+                    self.log("On success page, looking for continue button...", "INFO")
 
-                if "batch=1" not in current_url:
+                    # Look for OK/Continue button on success page
+                    continue_found = False
+                    for poll_attempt in range(5):
+                        self.check_cancelled()
+                        try:
+                            candidates = []
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='OK']"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='Continue']"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'OK')]"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Continue')]"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'OK')]"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'Continue')]"))
+                            candidates.extend(self.driver.find_elements(By.ID, "btnOK"))
+                            candidates.extend(self.driver.find_elements(By.ID, "btnContinue"))
+
+                            for candidate in candidates:
+                                try:
+                                    if candidate.is_displayed() and candidate.is_enabled():
+                                        self.log(f"Found continue button: {candidate.get_attribute('value') or candidate.text}", "SUCCESS")
+                                        candidate.click()
+                                        continue_found = True
+                                        time.sleep(2)
+                                        break
+                                except:
+                                    continue
+
+                            if continue_found:
+                                break
+                            time.sleep(1)
+                        except:
+                            time.sleep(1)
+
+                    if not continue_found:
+                        self.log("No continue button found on success page - batch complete", "SUCCESS")
+                        break
+
+                    # After clicking continue, wait for page and check if we're back in batch mode
+                    try:
+                        WebDriverWait(self.driver, 10).until(
+                            lambda driver: driver.execute_script("return document.readyState") == "complete"
+                        )
+                        time.sleep(2)
+                        current_url = self.driver.current_url
+
+                        # Check if we're back on approval page
+                        if "batch=1" in current_url or "m=approval" in current_url:
+                            # Check if there's an approve button (more requests)
+                            try:
+                                approve_btn = self.driver.find_element(By.ID, "btnApprove")
+                                if approve_btn.is_displayed():
+                                    self.log("Back on approval page - continuing with next request", "SUCCESS")
+                                    request_number += 1
+                                    continue
+                            except:
+                                pass
+
+                        self.log("Batch processing complete", "SUCCESS")
+                        break
+                    except:
+                        self.log("Batch processing complete", "SUCCESS")
+                        break
+
+                if "batch=1" not in current_url and "m=approval" not in current_url:
                     self.log("No longer in batch mode - batch complete", "SUCCESS")
                     break
 
@@ -1391,7 +1453,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     approve_btn = self.driver.find_element(By.ID, "btnApprove")
                     comment_field = self.driver.find_elements(By.ID, "txtComment")
                     if comment_field and approve_btn.is_displayed() and approve_btn.is_enabled():
-                        if "batch=1" in current_url and "infoMsg" not in current_url:
+                        if "infoMsg" not in current_url:
                             self.log("Next request loaded automatically - continuing...", "SUCCESS")
                             request_number += 1
                             continue
@@ -1418,13 +1480,13 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             self.log(f"Successfully approved {approved_count} user(s)!", "SUCCESS")
             self.report_progress(approved_count, approved_count, "Completed")
-            return True
+            return approved_count
 
         except OperationCancelledException:
             raise
         except Exception as e:
             self.log(f"Error during approval: {e}", "ERROR")
-            return False
+            return 0
 
     def reject_users(self, comment="Rejected via automation"):
         """Add comment and click Reject button - loops until all users rejected"""
@@ -1567,11 +1629,73 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 # Check for completion
                 current_url = self.driver.current_url
 
+                # Check if on success/info page - look for continue button first
                 if "infoMsg" in current_url:
-                    self.log("Redirected to success page - batch complete", "SUCCESS")
-                    break
+                    self.log("On success page, looking for continue button...", "INFO")
 
-                if "batch=1" not in current_url:
+                    # Look for OK/Continue button on success page
+                    continue_found = False
+                    for poll_attempt in range(5):
+                        self.check_cancelled()
+                        try:
+                            candidates = []
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='OK']"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='Continue']"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'OK')]"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Continue')]"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'OK')]"))
+                            candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'Continue')]"))
+                            candidates.extend(self.driver.find_elements(By.ID, "btnOK"))
+                            candidates.extend(self.driver.find_elements(By.ID, "btnContinue"))
+
+                            for candidate in candidates:
+                                try:
+                                    if candidate.is_displayed() and candidate.is_enabled():
+                                        self.log(f"Found continue button: {candidate.get_attribute('value') or candidate.text}", "SUCCESS")
+                                        candidate.click()
+                                        continue_found = True
+                                        time.sleep(2)
+                                        break
+                                except:
+                                    continue
+
+                            if continue_found:
+                                break
+                            time.sleep(1)
+                        except:
+                            time.sleep(1)
+
+                    if not continue_found:
+                        self.log("No continue button found on success page - batch complete", "SUCCESS")
+                        break
+
+                    # After clicking continue, wait for page and check if we're back in batch mode
+                    try:
+                        WebDriverWait(self.driver, 10).until(
+                            lambda driver: driver.execute_script("return document.readyState") == "complete"
+                        )
+                        time.sleep(2)
+                        current_url = self.driver.current_url
+
+                        # Check if we're back on rejection page
+                        if "batch=1" in current_url or "m=approval" in current_url:
+                            # Check if there's a reject button (more requests)
+                            try:
+                                reject_btn = self.driver.find_element(By.ID, "btnReject")
+                                if reject_btn.is_displayed():
+                                    self.log("Back on rejection page - continuing with next request", "SUCCESS")
+                                    request_number += 1
+                                    continue
+                            except:
+                                pass
+
+                        self.log("Batch processing complete", "SUCCESS")
+                        break
+                    except:
+                        self.log("Batch processing complete", "SUCCESS")
+                        break
+
+                if "batch=1" not in current_url and "m=approval" not in current_url:
                     self.log("No longer in batch mode - batch complete", "SUCCESS")
                     break
 
@@ -1654,7 +1778,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     reject_btn = self.driver.find_element(By.ID, "btnReject")
                     comment_field = self.driver.find_elements(By.ID, "txtComment")
                     if comment_field and reject_btn.is_displayed() and reject_btn.is_enabled():
-                        if "batch=1" in current_url and "infoMsg" not in current_url:
+                        if "infoMsg" not in current_url:
                             self.log("Next request loaded automatically - continuing...", "SUCCESS")
                             request_number += 1
                             continue
@@ -1681,13 +1805,13 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             self.log(f"Successfully rejected {rejected_count} user(s)!", "SUCCESS")
             self.report_progress(rejected_count, rejected_count, "Completed")
-            return True
+            return rejected_count
 
         except OperationCancelledException:
             raise
         except Exception as e:
             self.log(f"Error during rejection: {e}", "ERROR")
-            return False
+            return 0
 
     def get_all_groups(self):
         """Get all groups from dropdown with retry logic"""
@@ -2323,11 +2447,12 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     if selected > 0:
                         self.log(f"{selected} user(s) ready for approval (Batch {batch_number})", "SUCCESS")
 
-                        if self.approve_users(comment):
-                            total_approved += selected
+                        approved_count = self.approve_users(comment)
+                        if approved_count and approved_count > 0:
+                            total_approved += approved_count
                             # Remove processed users from the list
                             usernames_to_approve -= matched
-                            self.log(f"Batch {batch_number}: Approved {selected} users", "SUCCESS")
+                            self.log(f"Batch {batch_number}: Approved {approved_count} users", "SUCCESS")
 
                             if usernames_to_approve:
                                 # More users to process - navigate back to user list
@@ -2361,8 +2486,9 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if selected > 0:
                     self.log(f"{selected} user(s) ready for approval", "SUCCESS")
 
-                    if self.approve_users(comment):
-                        total_approved = selected
+                    approved_count = self.approve_users(comment)
+                    if approved_count and approved_count > 0:
+                        total_approved = approved_count
 
             if total_approved > 0:
                 self.log(f"Successfully approved {total_approved} users in {domain}!", "SUCCESS")
@@ -2426,8 +2552,9 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                     sel = self.select_all_pending_users()
 
                                 if sel > 0:
-                                    if self.approve_users(comment):
-                                        self.log(f"Successfully approved {sel} users in {counterpart}!", "SUCCESS")
+                                    approved = self.approve_users(comment)
+                                    if approved and approved > 0:
+                                        self.log(f"Successfully approved {approved} users in {counterpart}!", "SUCCESS")
                                         return True
 
                 return False
@@ -2514,11 +2641,12 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     if selected > 0:
                         self.log(f"{selected} user(s) ready for REJECTION (Batch {batch_number})", "WARNING")
 
-                        if self.reject_users(comment):
-                            total_rejected += selected
+                        rejected_count = self.reject_users(comment)
+                        if rejected_count and rejected_count > 0:
+                            total_rejected += rejected_count
                             # Remove processed users from the list
                             usernames_to_reject -= matched
-                            self.log(f"Batch {batch_number}: REJECTED {selected} users", "SUCCESS")
+                            self.log(f"Batch {batch_number}: REJECTED {rejected_count} users", "SUCCESS")
 
                             if usernames_to_reject:
                                 # More users to process - navigate back to user list
@@ -2552,8 +2680,9 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if selected > 0:
                     self.log(f"{selected} user(s) ready for REJECTION", "WARNING")
 
-                    if self.reject_users(comment):
-                        total_rejected = selected
+                    rejected_count = self.reject_users(comment)
+                    if rejected_count and rejected_count > 0:
+                        total_rejected = rejected_count
 
             if total_rejected > 0:
                 self.log(f"Successfully REJECTED {total_rejected} users in {domain}!", "SUCCESS")
@@ -2617,8 +2746,9 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                     sel = self.select_all_pending_users()
 
                                 if sel > 0:
-                                    if self.reject_users(comment):
-                                        self.log(f"Successfully REJECTED {sel} users in {counterpart}!", "SUCCESS")
+                                    rejected = self.reject_users(comment)
+                                    if rejected and rejected > 0:
+                                        self.log(f"Successfully REJECTED {rejected} users in {counterpart}!", "SUCCESS")
                                         return True
 
                 return False
