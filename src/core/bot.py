@@ -1304,77 +1304,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 # Check for completion
                 current_url = self.driver.current_url
 
-                # Check if on success/info page - look for continue button first
-                if "infoMsg" in current_url:
-                    self.log("On success page, looking for continue button...", "INFO")
-
-                    # Look for OK/Continue button on success page
-                    continue_found = False
-                    for poll_attempt in range(5):
-                        self.check_cancelled()
-                        try:
-                            candidates = []
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='OK']"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='Continue']"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'OK')]"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Continue')]"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'OK')]"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'Continue')]"))
-                            candidates.extend(self.driver.find_elements(By.ID, "btnOK"))
-                            candidates.extend(self.driver.find_elements(By.ID, "btnContinue"))
-
-                            for candidate in candidates:
-                                try:
-                                    if candidate.is_displayed() and candidate.is_enabled():
-                                        self.log(f"Found continue button: {candidate.get_attribute('value') or candidate.text}", "SUCCESS")
-                                        candidate.click()
-                                        continue_found = True
-                                        time.sleep(2)
-                                        break
-                                except:
-                                    continue
-
-                            if continue_found:
-                                break
-                            time.sleep(1)
-                        except:
-                            time.sleep(1)
-
-                    if not continue_found:
-                        self.log("No continue button found on success page - batch complete", "SUCCESS")
-                        break
-
-                    # After clicking continue, wait for page and check if we're back in batch mode
-                    try:
-                        WebDriverWait(self.driver, 10).until(
-                            lambda driver: driver.execute_script("return document.readyState") == "complete"
-                        )
-                        time.sleep(2)
-                        current_url = self.driver.current_url
-
-                        # Check if we're back on approval page
-                        if "batch=1" in current_url or "m=approval" in current_url:
-                            # Check if there's an approve button (more requests)
-                            try:
-                                approve_btn = self.driver.find_element(By.ID, "btnApprove")
-                                if approve_btn.is_displayed():
-                                    self.log("Back on approval page - continuing with next request", "SUCCESS")
-                                    request_number += 1
-                                    continue
-                            except:
-                                pass
-
-                        self.log("Batch processing complete", "SUCCESS")
-                        break
-                    except:
-                        self.log("Batch processing complete", "SUCCESS")
-                        break
-
-                if "batch=1" not in current_url and "m=approval" not in current_url:
-                    self.log("No longer in batch mode - batch complete", "SUCCESS")
-                    break
-
-                # Look for Next Request button
+                # Look for Next Request button (works on both success page and batch page)
                 next_request_found = False
                 next_request_button = None
 
@@ -1390,11 +1320,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         except:
                             pass
                     if button_values:
-                        self.log(f"Buttons on page: {', '.join(button_values)}", "DEBUG")
+                        self.log(f"Buttons on page: {', '.join(button_values)}", "INFO")
                 except:
                     pass
 
-                for poll_attempt in range(8):  # Increased from 5 to 8
+                for poll_attempt in range(8):
                     self.check_cancelled()
                     try:
                         candidates = []
@@ -1407,6 +1337,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         candidates.extend(self.driver.find_elements(By.ID, "btnNext"))
                         candidates.extend(self.driver.find_elements(By.ID, "btnNextRequest"))
                         candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'Next')]"))
+                        # Also check for OK/Continue buttons (sometimes on success page)
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='OK']"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'OK')]"))
+                        candidates.extend(self.driver.find_elements(By.ID, "btnOK"))
+                        candidates.extend(self.driver.find_elements(By.ID, "btnContinue"))
 
                         for candidate in candidates:
                             try:
@@ -1629,77 +1564,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 # Check for completion
                 current_url = self.driver.current_url
 
-                # Check if on success/info page - look for continue button first
-                if "infoMsg" in current_url:
-                    self.log("On success page, looking for continue button...", "INFO")
+                # Check for completion
+                current_url = self.driver.current_url
 
-                    # Look for OK/Continue button on success page
-                    continue_found = False
-                    for poll_attempt in range(5):
-                        self.check_cancelled()
-                        try:
-                            candidates = []
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='OK']"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='Continue']"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'OK')]"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Continue')]"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'OK')]"))
-                            candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'Continue')]"))
-                            candidates.extend(self.driver.find_elements(By.ID, "btnOK"))
-                            candidates.extend(self.driver.find_elements(By.ID, "btnContinue"))
-
-                            for candidate in candidates:
-                                try:
-                                    if candidate.is_displayed() and candidate.is_enabled():
-                                        self.log(f"Found continue button: {candidate.get_attribute('value') or candidate.text}", "SUCCESS")
-                                        candidate.click()
-                                        continue_found = True
-                                        time.sleep(2)
-                                        break
-                                except:
-                                    continue
-
-                            if continue_found:
-                                break
-                            time.sleep(1)
-                        except:
-                            time.sleep(1)
-
-                    if not continue_found:
-                        self.log("No continue button found on success page - batch complete", "SUCCESS")
-                        break
-
-                    # After clicking continue, wait for page and check if we're back in batch mode
-                    try:
-                        WebDriverWait(self.driver, 10).until(
-                            lambda driver: driver.execute_script("return document.readyState") == "complete"
-                        )
-                        time.sleep(2)
-                        current_url = self.driver.current_url
-
-                        # Check if we're back on rejection page
-                        if "batch=1" in current_url or "m=approval" in current_url:
-                            # Check if there's a reject button (more requests)
-                            try:
-                                reject_btn = self.driver.find_element(By.ID, "btnReject")
-                                if reject_btn.is_displayed():
-                                    self.log("Back on rejection page - continuing with next request", "SUCCESS")
-                                    request_number += 1
-                                    continue
-                            except:
-                                pass
-
-                        self.log("Batch processing complete", "SUCCESS")
-                        break
-                    except:
-                        self.log("Batch processing complete", "SUCCESS")
-                        break
-
-                if "batch=1" not in current_url and "m=approval" not in current_url:
-                    self.log("No longer in batch mode - batch complete", "SUCCESS")
-                    break
-
-                # Look for Next Request button
+                # Look for Next Request button (works on both success page and batch page)
                 next_request_found = False
                 next_request_button = None
 
@@ -1715,11 +1583,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         except:
                             pass
                     if button_values:
-                        self.log(f"Buttons on page: {', '.join(button_values)}", "DEBUG")
+                        self.log(f"Buttons on page: {', '.join(button_values)}", "INFO")
                 except:
                     pass
 
-                for poll_attempt in range(8):  # Increased from 5 to 8
+                for poll_attempt in range(8):
                     self.check_cancelled()
                     try:
                         candidates = []
@@ -1732,6 +1600,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         candidates.extend(self.driver.find_elements(By.ID, "btnNext"))
                         candidates.extend(self.driver.find_elements(By.ID, "btnNextRequest"))
                         candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'Next')]"))
+                        # Also check for OK/Continue buttons (sometimes on success page)
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='OK']"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'OK')]"))
+                        candidates.extend(self.driver.find_elements(By.ID, "btnOK"))
+                        candidates.extend(self.driver.find_elements(By.ID, "btnContinue"))
 
                         for candidate in candidates:
                             try:
