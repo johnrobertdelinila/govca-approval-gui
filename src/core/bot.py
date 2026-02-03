@@ -1197,6 +1197,269 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log(f"Error during approval: {e}", "ERROR")
             return False
 
+    def reject_users(self, comment="Rejected via automation"):
+        """Add comment and click Reject button - loops until all users rejected"""
+        self.check_cancelled()
+        self.log("Starting rejection process...")
+
+        try:
+            # Click Batch Response button
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1)
+
+            batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
+            time.sleep(0.5)
+
+            url_before_batch = self.driver.current_url
+            batch_respond_button.click()
+            self.log("Batch Response button clicked", "SUCCESS")
+
+            # Wait for dialog/popup
+            self.log("Waiting for rejection dialog...")
+            original_window = self.driver.current_window_handle
+
+            try:
+                def rejection_page_loaded(driver):
+                    if len(driver.window_handles) > 1:
+                        return True
+                    current_url = driver.current_url
+                    if current_url != url_before_batch:
+                        if "m=approval" in current_url or "c=approve_mgmt" in current_url:
+                            return driver.execute_script("return document.readyState") == "complete"
+                    return False
+
+                WebDriverWait(self.driver, 15).until(rejection_page_loaded)
+
+                all_windows = self.driver.window_handles
+                if len(all_windows) > 1:
+                    self.log("Detected popup window, switching to it...")
+                    for window in all_windows:
+                        if window != original_window:
+                            self.driver.switch_to.window(window)
+                            break
+
+                    WebDriverWait(self.driver, 10).until(
+                        lambda driver: driver.execute_script("return document.readyState") == "complete"
+                    )
+                else:
+                    self.log("Navigated to rejection page", "SUCCESS")
+
+            except Exception as e:
+                self.log(f"Navigation wait timeout: {e}", "WARNING")
+
+            WebDriverWait(self.driver, 15).until(
+                lambda driver: driver.execute_script("return document.readyState") == "complete"
+            )
+
+            self.check_cancelled()
+
+            # Check for error page
+            is_error, error_type = self.detect_error_page()
+            if is_error:
+                self.log(f"Error page detected: {error_type}", "ERROR")
+                return False
+
+            # Loop through all rejection requests
+            rejected_count = 0
+            request_number = 1
+
+            while True:
+                self.check_cancelled()
+                self.log(f"Processing Rejection Request #{request_number}...")
+                self.report_progress(rejected_count, -1, f"Processing rejection #{request_number}")
+
+                # Add comment
+                try:
+                    comment_field = WebDriverWait(self.driver, 15).until(
+                        EC.presence_of_element_located((By.ID, "txtComment"))
+                    )
+                    WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.ID, "txtComment"))
+                    )
+
+                    if not comment_field.get_attribute('value') or request_number == 1:
+                        comment_field.clear()
+                        time.sleep(0.2)
+                        comment_field.send_keys(comment)
+                        self.log(f"Comment added: '{comment}'", "SUCCESS")
+                    else:
+                        self.log("Comment already filled", "SUCCESS")
+                except Exception as e:
+                    self.log(f"Could not find comment field: {e}", "WARNING")
+
+                self.check_cancelled()
+
+                # Click Reject button
+                try:
+                    reject_button = WebDriverWait(self.driver, 15).until(
+                        EC.element_to_be_clickable((By.ID, "btnReject"))
+                    )
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", reject_button)
+                    time.sleep(0.5)
+
+                    url_before_reject = self.driver.current_url
+                    reject_button.click()
+                    self.log("Reject button clicked", "SUCCESS")
+                    rejected_count += 1
+
+                    # Handle alert
+                    try:
+                        WebDriverWait(self.driver, 2).until(EC.alert_is_present())
+                        alert = self.driver.switch_to.alert
+                        self.log(f"Alert: {alert.text}", "WARNING")
+                        alert.accept()
+                        self.log("Alert accepted", "SUCCESS")
+                    except:
+                        pass
+
+                except Exception as e:
+                    self.log(f"Could not find Reject button: {e}", "ERROR")
+                    if request_number == 1:
+                        self.log("Failed to start rejection process", "ERROR")
+                        return False
+                    break
+
+                # Wait for page transition
+                self.log("Waiting for page transition...")
+                time.sleep(7)
+
+                self.check_cancelled()
+
+                # Wait for page ready
+                try:
+                    WebDriverWait(self.driver, 20).until(
+                        lambda driver: driver.execute_script("return document.readyState") == "complete"
+                    )
+                    time.sleep(2)
+                except:
+                    time.sleep(5)
+
+                # Check for completion
+                current_url = self.driver.current_url
+
+                if "infoMsg" in current_url:
+                    self.log("Redirected to success page - batch complete", "SUCCESS")
+                    break
+
+                if "batch=1" not in current_url:
+                    self.log("No longer in batch mode - batch complete", "SUCCESS")
+                    break
+
+                # Look for Next Request button
+                next_request_found = False
+                next_request_button = None
+
+                # Debug: Log all buttons on page
+                try:
+                    all_buttons = self.driver.find_elements(By.XPATH, "//input[@type='button'] | //input[@type='submit'] | //button")
+                    button_values = []
+                    for btn in all_buttons[:10]:  # Limit to first 10
+                        try:
+                            val = btn.get_attribute('value') or btn.text or btn.get_attribute('id')
+                            if val:
+                                button_values.append(val)
+                        except:
+                            pass
+                    if button_values:
+                        self.log(f"Buttons on page: {', '.join(button_values)}", "DEBUG")
+                except:
+                    pass
+
+                for poll_attempt in range(8):  # Increased from 5 to 8
+                    self.check_cancelled()
+                    try:
+                        candidates = []
+                        # Multiple selector variations for "Next Request" button
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//input[@value='Next Request']"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//input[contains(@value, 'Next')][@type='button']"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//input[contains(@value, 'Next')][@type='submit']"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Next')]"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//input[contains(@value, 'Continue')]"))
+                        candidates.extend(self.driver.find_elements(By.ID, "btnNext"))
+                        candidates.extend(self.driver.find_elements(By.ID, "btnNextRequest"))
+                        candidates.extend(self.driver.find_elements(By.XPATH, "//a[contains(text(), 'Next')]"))
+
+                        for candidate in candidates:
+                            try:
+                                if candidate.is_displayed() and candidate.is_enabled():
+                                    next_request_button = candidate
+                                    next_request_found = True
+                                    self.log(f"Found next button: {candidate.get_attribute('value') or candidate.text}", "DEBUG")
+                                    break
+                            except:
+                                continue
+
+                        if next_request_found:
+                            break
+
+                        if poll_attempt < 7:
+                            time.sleep(2)  # Wait between polls
+                    except:
+                        if poll_attempt < 7:
+                            time.sleep(2)
+
+                if next_request_found and next_request_button:
+                    self.log("Found Next Request button - clicking...")
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", next_request_button)
+                    time.sleep(0.3)
+                    next_request_button.click()
+                    self.log("Clicked Next Request button", "SUCCESS")
+
+                    try:
+                        WebDriverWait(self.driver, 15).until(
+                            EC.presence_of_element_located((By.ID, "txtComment"))
+                        )
+                        WebDriverWait(self.driver, 10).until(
+                            lambda driver: driver.execute_script("return document.readyState") == "complete"
+                        )
+                        self.log("Rejection form loaded", "SUCCESS")
+                    except:
+                        time.sleep(3)
+
+                    request_number += 1
+                    continue
+
+                # Check if Reject button still exists (auto-loaded next request)
+                try:
+                    reject_btn = self.driver.find_element(By.ID, "btnReject")
+                    comment_field = self.driver.find_elements(By.ID, "txtComment")
+                    if comment_field and reject_btn.is_displayed() and reject_btn.is_enabled():
+                        if "batch=1" in current_url and "infoMsg" not in current_url:
+                            self.log("Next request loaded automatically - continuing...", "SUCCESS")
+                            request_number += 1
+                            continue
+                except:
+                    pass
+
+                # Check for cancel only
+                try:
+                    cancel_exists = len(self.driver.find_elements(By.XPATH, "//input[@value='Cancel']")) > 0
+                    reject_exists = len(self.driver.find_elements(By.ID, "btnReject")) > 0
+
+                    if cancel_exists and not reject_exists:
+                        self.log("Found Cancel button only - all requests processed", "SUCCESS")
+                        break
+
+                    if not reject_exists:
+                        self.log("All requests processed", "SUCCESS")
+                        break
+                except:
+                    pass
+
+                self.log("Could not find next action - batch complete", "SUCCESS")
+                break
+
+            self.log(f"Successfully rejected {rejected_count} user(s)!", "SUCCESS")
+            self.report_progress(rejected_count, rejected_count, "Completed")
+            return True
+
+        except OperationCancelledException:
+            raise
+        except Exception as e:
+            self.log(f"Error during rejection: {e}", "ERROR")
+            return False
+
     def get_all_groups(self):
         """Get all groups from dropdown with retry logic"""
         self.check_cancelled()
@@ -1874,6 +2137,135 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                 if sel > 0:
                                     if self.approve_users(comment):
                                         self.log(f"Successfully approved {sel} users in {counterpart}!", "SUCCESS")
+                                        return True
+
+                return False
+
+        except OperationCancelledException:
+            self.log("Cancelled by user", "WARNING")
+            return False
+        except Exception as e:
+            self.log(f"Unexpected error: {e}", "ERROR")
+            return False
+
+    def run_rejection_process(self, domain="NCR00Sign", comment="Rejected via automation",
+                              process_counterpart=True, specific_users=None):
+        """
+        Run the complete rejection process (Workflow 1: Add User Batch Rejection)
+        Similar to approval but clicks Reject instead of Approve.
+        """
+        try:
+            self.log("=" * 50)
+            self.log("GovCA Rejection Automation - Add User (REJECT)")
+            self.log("=" * 50)
+
+            # Use session persistence - reuse existing session or re-authenticate
+            if not self.ensure_valid_session():
+                self.log("Failed to connect", "ERROR")
+                return False
+
+            self.check_cancelled()
+
+            if not self.select_domain(domain):
+                self.log("Failed to select domain", "ERROR")
+                return False
+
+            if not self.navigate_to_user_list():
+                self.log("Failed to navigate to User List", "ERROR")
+                return False
+
+            if not self.search_pending_users():
+                self.log(f"No pending users found in {domain}", "WARNING")
+
+                if process_counterpart:
+                    counterpart = self.get_counterpart_domain(domain)
+                    if counterpart:
+                        self.log(f"Trying counterpart domain: {counterpart}")
+
+                        if not self.select_domain(counterpart):
+                            return False
+
+                        time.sleep(3)
+
+                        if not self.navigate_to_user_list():
+                            return False
+
+                        if not self.search_pending_users():
+                            self.log(f"No pending users in {counterpart} either", "WARNING")
+                            return True
+
+                        domain = counterpart
+                        process_counterpart = False
+                    else:
+                        return False
+                else:
+                    return False
+
+            # Select users (specific users only for rejection)
+            if specific_users:
+                suffix = "_Sign" if "Sign" in domain else "_Auth"
+                usernames_to_reject = [f"{user}{suffix}" for user in specific_users]
+                self.log(f"Mode: Specific users for REJECTION - {len(usernames_to_reject)} target(s)")
+                selected, matched = self.select_specific_users(usernames_to_reject)
+            else:
+                self.log("Mode: All pending users for REJECTION")
+                selected = self.select_all_pending_users()
+
+            if selected > 0:
+                self.log(f"{selected} user(s) ready for REJECTION", "WARNING")
+
+                if self.reject_users(comment):
+                    self.log(f"Successfully REJECTED {selected} users in {domain}!", "SUCCESS")
+
+                    # Process counterpart
+                    if process_counterpart:
+                        counterpart = self.get_counterpart_domain(domain)
+                        if counterpart:
+                            self.log("=" * 50)
+                            self.log(f"Processing counterpart domain for REJECTION: {counterpart}")
+                            self.log("=" * 50)
+
+                            if self.select_domain(counterpart):
+                                time.sleep(3)
+                                if self.navigate_to_user_list() and self.search_pending_users():
+                                    if specific_users:
+                                        suffix = "_Sign" if "Sign" in counterpart else "_Auth"
+                                        usernames = [f"{user}{suffix}" for user in specific_users]
+                                        sel, _ = self.select_specific_users(usernames)
+                                    else:
+                                        sel = self.select_all_pending_users()
+
+                                    if sel > 0:
+                                        self.reject_users(comment)
+
+                    return True
+                else:
+                    self.log("Rejection failed", "ERROR")
+                    return False
+            else:
+                self.log(f"No users selected in {domain}", "WARNING")
+
+                # Try counterpart domain if enabled
+                if process_counterpart:
+                    counterpart = self.get_counterpart_domain(domain)
+                    if counterpart:
+                        self.log("=" * 50)
+                        self.log(f"Trying counterpart domain for REJECTION: {counterpart}")
+                        self.log("=" * 50)
+
+                        if self.select_domain(counterpart):
+                            time.sleep(3)
+                            if self.navigate_to_user_list() and self.search_pending_users():
+                                if specific_users:
+                                    suffix = "_Sign" if "Sign" in counterpart else "_Auth"
+                                    usernames = [f"{user}{suffix}" for user in specific_users]
+                                    sel, _ = self.select_specific_users(usernames)
+                                else:
+                                    sel = self.select_all_pending_users()
+
+                                if sel > 0:
+                                    if self.reject_users(comment):
+                                        self.log(f"Successfully REJECTED {sel} users in {counterpart}!", "SUCCESS")
                                         return True
 
                 return False
