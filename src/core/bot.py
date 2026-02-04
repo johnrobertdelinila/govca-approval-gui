@@ -357,6 +357,26 @@ class GovCAApprovalBot:
                     continue
 
             # Final check after stability period
+            # First, ensure loading indicator is not visible (wait up to 30 seconds)
+            loading_wait_start = time.time()
+            loading_wait_timeout = 30  # seconds
+            while time.time() - loading_wait_start < loading_wait_timeout:
+                loading_visible = self.driver.execute_script("""
+                    var processing = document.querySelector('.dataTables_processing');
+                    if (processing) {
+                        var style = window.getComputedStyle(processing);
+                        if (style.display !== 'none' && style.visibility !== 'hidden') {
+                            return true;
+                        }
+                    }
+                    return (typeof jQuery !== 'undefined' && jQuery.active > 0);
+                """)
+                if not loading_visible:
+                    break
+                self.log("Waiting for loading indicator to disappear...")
+                time.sleep(1)
+                self.check_cancelled()
+
             final_result = table_is_ready(self.driver)
 
             if final_result == 'has_data':
