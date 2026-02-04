@@ -18,13 +18,13 @@ try:
     from .logging_handler import LogBuffer, ProgressTracker
     from .core.bot import GovCAApprovalBot, OperationCancelledException
     from .core.browser import check_firefox_installed, check_geckodriver_available, find_firefox_profile
-    from .utils.settings import get_default_domain, set_default_domain, DOMAIN_LIST
+    from .utils.settings import get_default_domain, set_default_domain, DOMAIN_LIST, AUTH_METHODS, get_auth_method, set_auth_method
     from .utils.resources import get_gif_path
 except ImportError:
     from logging_handler import LogBuffer, ProgressTracker
     from core.bot import GovCAApprovalBot, OperationCancelledException
     from core.browser import check_firefox_installed, check_geckodriver_available, find_firefox_profile
-    from utils.settings import get_default_domain, set_default_domain, DOMAIN_LIST
+    from utils.settings import get_default_domain, set_default_domain, DOMAIN_LIST, AUTH_METHODS, get_auth_method, set_auth_method
     from utils.resources import get_gif_path
 
 # Set appearance mode to system default
@@ -497,6 +497,7 @@ class GovCAApp(ctk.CTk):
 
             self.workflow_frames[value] = {
                 'container': btn_container,
+                'inner': inner,
                 'title': title_lbl,
                 'subtitle': subtitle_lbl
             }
@@ -539,26 +540,33 @@ class GovCAApp(ctk.CTk):
         self._update_config_visibility()
 
     def _create_config_section(self, parent):
-        """Create configuration section"""
-        # Header
-        header = ctk.CTkLabel(
-            parent,
-            text="CONFIGURATION",
-            font=Typography.section_header(),
-            text_color=ColorPalette.get('text_muted')
-        )
-        header.pack(anchor="w", padx=15, pady=(12, 8))
-
+        """Create configuration section with separated Settings and Workflow Options"""
         # Config container (scrollable)
         config_container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        config_container.pack(fill="both", expand=True, padx=15, pady=(0, 12))
+        config_container.pack(fill="both", expand=True, padx=10, pady=(8, 8))
 
-        # Row 1: Domain and Comment
-        row1 = ctk.CTkFrame(config_container, fg_color="transparent")
-        row1.pack(fill="x", pady=3)
+        # ============ SETTINGS SECTION (One-time setup) ============
+        settings_frame = ctk.CTkFrame(config_container, fg_color=ColorPalette.get('bg_secondary'), corner_radius=8)
+        settings_frame.pack(fill="x", pady=(0, 8))
+
+        # Settings header
+        ctk.CTkLabel(
+            settings_frame,
+            text="SETTINGS",
+            font=Typography.section_header(),
+            text_color=ColorPalette.get('text_muted')
+        ).pack(anchor="w", padx=12, pady=(8, 6))
+
+        # Settings content
+        settings_content = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        settings_content.pack(fill="x", padx=12, pady=(0, 10))
+
+        # Row 1: Domain + Set Default + Auth
+        settings_row1 = ctk.CTkFrame(settings_content, fg_color="transparent")
+        settings_row1.pack(fill="x", pady=2)
 
         # Domain (in its own frame for show/hide)
-        self.domain_frame = ctk.CTkFrame(row1, fg_color="transparent")
+        self.domain_frame = ctk.CTkFrame(settings_row1, fg_color="transparent")
         self.domain_frame.pack(side="left")
 
         ctk.CTkLabel(
@@ -566,13 +574,13 @@ class GovCAApp(ctk.CTk):
             text="Domain:",
             font=Typography.body_md(),
             text_color=ColorPalette.get('text_secondary'),
-            width=80,
+            width=60,
             anchor="w"
         ).pack(side="left")
 
         self.domain_dropdown = ctk.CTkComboBox(
             self.domain_frame,
-            width=180,
+            width=160,
             height=32,
             values=DOMAIN_LIST,
             state="readonly",
@@ -585,13 +593,13 @@ class GovCAApp(ctk.CTk):
             button_hover_color=ColorPalette.get('accent_secondary')
         )
         self.domain_dropdown.set(get_default_domain())
-        self.domain_dropdown.pack(side="left", padx=(0, 8))
+        self.domain_dropdown.pack(side="left", padx=(0, 6))
 
         # Set as Default button
         self.set_default_btn = ctk.CTkButton(
             self.domain_frame,
             text="Set Default",
-            width=90,
+            width=85,
             height=32,
             font=Typography.body_sm(),
             fg_color="transparent",
@@ -604,47 +612,45 @@ class GovCAApp(ctk.CTk):
         )
         self.set_default_btn.pack(side="left", padx=(0, 15))
 
-        # Comment
-        self.comment_label = ctk.CTkLabel(
-            row1,
-            text="Comment:",
+        # Authentication Method
+        self.auth_frame = ctk.CTkFrame(settings_row1, fg_color="transparent")
+        self.auth_frame.pack(side="left")
+
+        ctk.CTkLabel(
+            self.auth_frame,
+            text="Auth:",
             font=Typography.body_md(),
             text_color=ColorPalette.get('text_secondary'),
-            width=70,
+            width=40,
             anchor="w"
-        )
-        self.comment_label.pack(side="left")
+        ).pack(side="left")
 
-        self.comment_entry = ctk.CTkEntry(
-            row1,
-            width=250,
+        self.auth_dropdown = ctk.CTkComboBox(
+            self.auth_frame,
+            width=200,
             height=32,
+            values=AUTH_METHODS,
+            state="readonly",
             font=Typography.body_md(),
+            dropdown_font=Typography.body_md(),
             corner_radius=8,
             border_width=1,
             border_color=ColorPalette.get('border'),
-            placeholder_text="Approved via automation"
+            button_color=ColorPalette.get('accent_primary'),
+            button_hover_color=ColorPalette.get('accent_secondary'),
+            command=self._on_auth_method_change
         )
-        self.comment_entry.pack(side="left")
-        self.comment_entry.insert(0, "Approved via automation")
+        self.auth_dropdown.set(get_auth_method())
+        self.auth_dropdown.pack(side="left")
 
-        # Domain note/disclaimer
-        self.domain_note = ctk.CTkLabel(
-            config_container,
-            text="Note: Please select only domains for your region. Access depends on your certificate permissions.",
-            font=ctk.CTkFont(size=11, slant="italic"),
-            text_color=ColorPalette.get('text_muted')
-        )
-        self.domain_note.pack(fill="x", pady=(3, 5))
-
-        # Row 2: Options
-        row2 = ctk.CTkFrame(config_container, fg_color="transparent")
-        row2.pack(fill="x", pady=4)
+        # Row 2: Counterpart checkbox + All Domains toggle
+        settings_row2 = ctk.CTkFrame(settings_content, fg_color="transparent")
+        settings_row2.pack(fill="x", pady=4)
 
         # Counterpart checkbox
         self.counterpart_var = ctk.BooleanVar(value=True)
         self.counterpart_check = ctk.CTkCheckBox(
-            row2,
+            settings_row2,
             text="Process counterpart domain (Sign/Auth)",
             variable=self.counterpart_var,
             font=Typography.body_md(),
@@ -658,9 +664,8 @@ class GovCAApp(ctk.CTk):
         )
         self.counterpart_check.pack(side="left")
 
-        # Row 2.5: All Domains toggle (for workflow 3 only)
-        self.all_domains_frame = ctk.CTkFrame(config_container, fg_color="transparent")
-        self.all_domains_frame.pack(fill="x", pady=4)
+        # All Domains toggle (for workflow 3 only) - in same row
+        self.all_domains_frame = ctk.CTkFrame(settings_row2, fg_color="transparent")
 
         self.all_domains_var = ctk.BooleanVar(value=False)
         self.all_domains_switch = ctk.CTkSwitch(
@@ -674,12 +679,63 @@ class GovCAApp(ctk.CTk):
             command=self._toggle_all_domains
         )
         self.all_domains_switch.pack(side="left")
-
         # Initially hide all domains toggle
         self.all_domains_frame.pack_forget()
 
+        # Domain note/disclaimer
+        self.domain_note = ctk.CTkLabel(
+            settings_content,
+            text="Note: Select only domains for your region. Access depends on your certificate permissions.",
+            font=ctk.CTkFont(size=10, slant="italic"),
+            text_color=ColorPalette.get('text_muted')
+        )
+        self.domain_note.pack(fill="x", pady=(4, 0))
+
+        # ============ WORKFLOW OPTIONS SECTION ============
+        self.workflow_options_frame = ctk.CTkFrame(config_container, fg_color=ColorPalette.get('bg_secondary'), corner_radius=8)
+        self.workflow_options_frame.pack(fill="x", pady=(0, 0))
+
+        # Workflow Options header
+        ctk.CTkLabel(
+            self.workflow_options_frame,
+            text="WORKFLOW OPTIONS",
+            font=Typography.section_header(),
+            text_color=ColorPalette.get('text_muted')
+        ).pack(anchor="w", padx=12, pady=(8, 6))
+
+        # Workflow options content
+        workflow_content = ctk.CTkFrame(self.workflow_options_frame, fg_color="transparent")
+        workflow_content.pack(fill="x", padx=12, pady=(0, 10))
+
+        # Comment row
+        self.comment_row = ctk.CTkFrame(workflow_content, fg_color="transparent")
+        self.comment_row.pack(fill="x", pady=2)
+
+        self.comment_label = ctk.CTkLabel(
+            self.comment_row,
+            text="Comment:",
+            font=Typography.body_md(),
+            text_color=ColorPalette.get('text_secondary'),
+            width=70,
+            anchor="w"
+        )
+        self.comment_label.pack(side="left")
+
+        self.comment_entry = ctk.CTkEntry(
+            self.comment_row,
+            width=350,
+            height=32,
+            font=Typography.body_md(),
+            corner_radius=8,
+            border_width=1,
+            border_color=ColorPalette.get('border'),
+            placeholder_text="Approved via automation"
+        )
+        self.comment_entry.pack(side="left")
+        self.comment_entry.insert(0, "Approved via automation")
+
         # Row 3: Mode selection (for workflow 1 only)
-        self.mode_frame = ctk.CTkFrame(config_container, fg_color="transparent")
+        self.mode_frame = ctk.CTkFrame(workflow_content, fg_color="transparent")
         self.mode_frame.pack(fill="x", pady=4)
 
         ctk.CTkLabel(
@@ -687,7 +743,7 @@ class GovCAApp(ctk.CTk):
             text="Mode:",
             font=Typography.body_md(),
             text_color=ColorPalette.get('text_secondary'),
-            width=80,
+            width=70,
             anchor="w"
         ).pack(side="left")
 
@@ -719,7 +775,7 @@ class GovCAApp(ctk.CTk):
         mode_specific.pack(side="left")
 
         # Row 4: Usernames input (for specific mode)
-        self.usernames_frame = ctk.CTkFrame(config_container, fg_color="transparent")
+        self.usernames_frame = ctk.CTkFrame(workflow_content, fg_color="transparent")
         self.usernames_frame.pack(fill="x", pady=4)
 
         ctk.CTkLabel(
@@ -727,14 +783,14 @@ class GovCAApp(ctk.CTk):
             text="Usernames:",
             font=Typography.body_md(),
             text_color=ColorPalette.get('text_secondary'),
-            width=80,
+            width=70,
             anchor="nw"
         ).pack(side="left", anchor="n")
 
         self.usernames_text = ctk.CTkTextbox(
             self.usernames_frame,
             width=350,
-            height=70,
+            height=60,
             font=Typography.mono(12),
             corner_radius=8,
             border_width=1,
@@ -773,7 +829,7 @@ class GovCAApp(ctk.CTk):
         self.usernames_frame.pack_forget()
 
         # Batch Reject Option Frame (only visible when "Specific users only" is selected)
-        self.batch_reject_frame = ctk.CTkFrame(config_container, fg_color="transparent")
+        self.batch_reject_frame = ctk.CTkFrame(workflow_content, fg_color="transparent")
 
         self.batch_reject_var = ctk.BooleanVar(value=False)
         self.batch_reject_checkbox = ctk.CTkCheckBox(
@@ -790,12 +846,12 @@ class GovCAApp(ctk.CTk):
             text_color=ColorPalette.get('text_primary'),
             command=self._on_batch_reject_toggle
         )
-        self.batch_reject_checkbox.pack(side="left", padx=(80, 0))
+        self.batch_reject_checkbox.pack(side="left", padx=(70, 0))
 
         # Warning label (shows when batch reject is enabled)
         self.batch_reject_warning = ctk.CTkLabel(
             self.batch_reject_frame,
-            text="⚠ WARNING: This will REJECT all specified users!",
+            text="WARNING: This will REJECT all specified users!",
             font=Typography.body_sm(),
             text_color="#FF6B6B"
         )
@@ -814,29 +870,47 @@ class GovCAApp(ctk.CTk):
         # Hide all_domains toggle by default
         self.all_domains_frame.pack_forget()
 
-        # Show/hide domain and comment based on workflow
+        # Show/hide elements based on workflow
         if workflow == "3":
-            # Assign group - show all_domains toggle
-            self.all_domains_frame.pack(fill="x", pady=4)
-            self.comment_entry.configure(state="disabled")
+            # Assign group - show all_domains toggle, hide workflow options
+            self.all_domains_frame.pack(side="left", padx=(20, 0))
+            self.comment_row.pack_forget()
             self.mode_frame.pack_forget()
             self.usernames_frame.pack_forget()
+            # Hide batch reject (only for Add User workflow)
+            self.batch_reject_frame.pack_forget()
+            self.batch_reject_var.set(False)
+            self.batch_reject_warning.pack_forget()
+            self._reset_start_button()
+            # Hide workflow options section for assign group
+            self.workflow_options_frame.pack_forget()
             # Update domain/counterpart based on all_domains toggle
             self._toggle_all_domains()
         elif workflow == "2":
             # Revoke cert - show domain, comment, and counterpart
             self.domain_frame.pack(side="left")
             self.domain_dropdown.configure(state="readonly")
-            self.comment_entry.configure(state="normal")
             self.counterpart_check.pack(side="left")
+            # Show workflow options section with comment only
+            self.workflow_options_frame.pack(fill="x", pady=(0, 0))
+            self.comment_row.pack(fill="x", pady=2)
+            self.comment_entry.configure(state="normal")
             self.mode_frame.pack_forget()
             self.usernames_frame.pack_forget()
+            # Hide batch reject (only for Add User workflow)
+            self.batch_reject_frame.pack_forget()
+            self.batch_reject_var.set(False)
+            self.batch_reject_warning.pack_forget()
+            self._reset_start_button()
         else:
-            # Add user - show all
+            # Add user - show all workflow options
             self.domain_frame.pack(side="left")
             self.domain_dropdown.configure(state="readonly")
-            self.comment_entry.configure(state="normal")
             self.counterpart_check.pack(side="left")
+            # Show workflow options section
+            self.workflow_options_frame.pack(fill="x", pady=(0, 0))
+            self.comment_row.pack(fill="x", pady=2)
+            self.comment_entry.configure(state="normal")
             self.mode_frame.pack(fill="x", pady=4)
             self._update_usernames_visibility()
 
@@ -853,11 +927,31 @@ class GovCAApp(ctk.CTk):
             self.counterpart_check.pack(side="left")
 
     def _on_batch_reject_toggle(self):
-        """Show/hide warning when batch reject is toggled"""
+        """Show/hide warning when batch reject is toggled and change START button color"""
         if self.batch_reject_var.get():
             self.batch_reject_warning.pack(side="left", padx=(10, 0))
+            # Change START button to warning color (orange)
+            self.start_button.configure(
+                fg_color=ColorPalette.get('accent_warning'),
+                hover_color="#d97706" if ctk.get_appearance_mode() == "Light" else "#fbbf24",
+                text="START (REJECT)"
+            )
         else:
             self.batch_reject_warning.pack_forget()
+            # Restore START button to normal color (green)
+            self._reset_start_button()
+
+    def _on_auth_method_change(self, choice):
+        """Handle authentication method change"""
+        set_auth_method(choice)
+
+    def _reset_start_button(self):
+        """Reset START button to normal green state"""
+        self.start_button.configure(
+            fg_color=ColorPalette.get('accent_success'),
+            hover_color="#059669" if ctk.get_appearance_mode() == "Light" else "#34d399",
+            text="START"
+        )
 
     def _update_usernames_visibility(self):
         """Show/hide usernames input and batch reject option based on mode"""
@@ -869,6 +963,8 @@ class GovCAApp(ctk.CTk):
             self.batch_reject_frame.pack_forget()
             self.batch_reject_var.set(False)
             self.batch_reject_warning.pack_forget()
+            # Reset START button to normal color (green)
+            self._reset_start_button()
 
     def _create_log_section(self, parent):
         """Create log output section with animation"""
@@ -1182,9 +1278,18 @@ class GovCAApp(ctk.CTk):
             )
 
     def _create_progress_section(self, parent):
-        """Create progress section with animated progress bar"""
+        """Create progress section with animated progress bar and phase indicator"""
         progress_frame = ctk.CTkFrame(parent, fg_color="transparent")
         progress_frame.pack(fill="x", side="top", pady=(0, 10))
+
+        # Phase indicator label (shown when processing multiple domains)
+        self.phase_label = ctk.CTkLabel(
+            progress_frame,
+            text="",
+            font=Typography.body_sm(),
+            text_color=ColorPalette.get('accent_primary')
+        )
+        # Initially hidden - will be shown when phase info is available
 
         # Use animated progress bar
         self.progress_bar = AnimatedProgressBar(
@@ -1462,9 +1567,27 @@ class GovCAApp(ctk.CTk):
         for msg in new_messages:
             self._log(msg.message, msg.level)
 
-        # Poll progress
-        current, total, message, changed = self.progress_tracker.poll()
-        if changed:
+        # Poll progress (now returns dict)
+        data = self.progress_tracker.poll()
+        if data['changed']:
+            current = data['current']
+            total = data['total']
+            message = data['message']
+            phase = data['phase']
+            total_phases = data['total_phases']
+            phase_label = data['phase_label']
+
+            # Update phase indicator
+            if total_phases > 1 and phase_label:
+                self.phase_label.configure(text=f"Phase {phase}/{total_phases}: {phase_label}")
+                self.phase_label.pack(anchor="w", pady=(0, 4))
+            elif phase_label:
+                self.phase_label.configure(text=phase_label)
+                self.phase_label.pack(anchor="w", pady=(0, 4))
+            else:
+                self.phase_label.pack_forget()
+
+            # Update progress bar
             if total > 0:
                 progress = current / total
                 self.progress_bar.set_animated(progress)
@@ -1513,13 +1636,13 @@ class GovCAApp(ctk.CTk):
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="normal")
             for v, widgets in self.workflow_frames.items():
-                for widget in [widgets['container'], widgets['title'], widgets['subtitle']]:
+                for widget in [widgets['container'], widgets['inner'], widgets['title'], widgets['subtitle']]:
                     widget.unbind('<Button-1>')
         else:
             self.start_button.configure(state="normal")
             self.stop_button.configure(state="disabled")
             for v, widgets in self.workflow_frames.items():
-                for widget in [widgets['container'], widgets['title'], widgets['subtitle']]:
+                for widget in [widgets['container'], widgets['inner'], widgets['title'], widgets['subtitle']]:
                     widget.bind('<Button-1>', lambda e, val=v: self._select_workflow(val))
 
     def _start_automation(self):
@@ -1570,18 +1693,23 @@ class GovCAApp(ctk.CTk):
             self._start_animation()
 
         # Reuse existing bot or create new one
+        # Get auth method from dropdown
+        auth_method = self.auth_dropdown.get()
+
         if self.bot is None:
             self.bot = GovCAApprovalBot(
                 log_callback=self.log_buffer.get_callback(),
                 progress_callback=self.progress_tracker.get_callback(),
-                cancel_event=self.cancel_event
+                cancel_event=self.cancel_event,
+                auth_method=auth_method
             )
         else:
             # Update callbacks on existing bot for this workflow
             self.bot.update_callbacks(
                 log_callback=self.log_buffer.get_callback(),
                 progress_callback=self.progress_tracker.get_callback(),
-                cancel_event=self.cancel_event
+                cancel_event=self.cancel_event,
+                auth_method=auth_method
             )
 
         bot = self.bot  # Local reference for thread

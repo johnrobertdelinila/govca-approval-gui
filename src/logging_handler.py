@@ -108,6 +108,7 @@ class LogBuffer:
 class ProgressTracker:
     """
     Thread-safe progress tracker for reporting progress from automation thread.
+    Supports phase tracking for multi-phase operations (e.g., primary + counterpart domain).
     """
 
     def __init__(self):
@@ -116,36 +117,65 @@ class ProgressTracker:
         self.total = 0
         self.message = ""
         self.indeterminate = False
+        # Phase tracking for multi-domain operations
+        self.phase = 1
+        self.total_phases = 1
+        self.phase_label = ""
 
-    def update(self, current: int, total: int, message: str = ""):
-        """Update progress (thread-safe)"""
-        self.queue.put((current, total, message))
+    def update(self, current: int, total: int, message: str = "",
+               phase: int = None, total_phases: int = None, phase_label: str = None):
+        """Update progress with optional phase info (thread-safe)"""
+        self.queue.put({
+            'current': current,
+            'total': total,
+            'message': message,
+            'phase': phase,
+            'total_phases': total_phases,
+            'phase_label': phase_label
+        })
 
     def get_callback(self):
         """Get a callback function for the bot to use"""
-        def callback(current: int, total: int, message: str = ""):
-            self.update(current, total, message)
+        def callback(current: int, total: int, message: str = "",
+                    phase: int = None, total_phases: int = None, phase_label: str = None):
+            self.update(current, total, message, phase, total_phases, phase_label)
         return callback
 
     def poll(self):
         """
         Get the latest progress update.
         Call this from the GUI thread.
-        Returns: (current, total, message, changed)
+        Returns: dict with keys: current, total, message, changed, phase, total_phases, phase_label
         """
         changed = False
         while not self.queue.empty():
             try:
-                current, total, message = self.queue.get_nowait()
-                self.current = current
-                self.total = total
-                self.message = message
-                self.indeterminate = (total < 0)
+                data = self.queue.get_nowait()
+                self.current = data['current']
+                self.total = data['total']
+                self.message = data['message']
+                self.indeterminate = (data['total'] < 0)
+                # Update phase info if provided
+                if data['phase'] is not None:
+                    self.phase = data['phase']
+                if data['total_phases'] is not None:
+                    self.total_phases = data['total_phases']
+                if data['phase_label'] is not None:
+                    self.phase_label = data['phase_label']
                 changed = True
             except:
                 break
 
-        return self.current, self.total, self.message, changed
+        return {
+            'current': self.current,
+            'total': self.total,
+            'message': self.message,
+            'changed': changed,
+            'phase': self.phase,
+            'total_phases': self.total_phases,
+            'phase_label': self.phase_label,
+            'indeterminate': self.indeterminate
+        }
 
     def reset(self):
         """Reset progress"""
@@ -153,6 +183,9 @@ class ProgressTracker:
         self.total = 0
         self.message = ""
         self.indeterminate = False
+        self.phase = 1
+        self.total_phases = 1
+        self.phase_label = ""
         # Drain queue
         while not self.queue.empty():
             try:

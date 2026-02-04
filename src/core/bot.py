@@ -51,7 +51,7 @@ class GovCAApprovalBot:
     Supports callback-based logging and progress reporting for GUI integration.
     """
 
-    def __init__(self, firefox_profile_path=None, log_callback=None, progress_callback=None, cancel_event=None):
+    def __init__(self, firefox_profile_path=None, log_callback=None, progress_callback=None, cancel_event=None, auth_method=None):
         """
         Initialize the bot with optional GUI callbacks.
 
@@ -60,6 +60,7 @@ class GovCAApprovalBot:
             log_callback: Function to call for logging (message, level)
             progress_callback: Function to call for progress updates (current, total, message)
             cancel_event: threading.Event to signal cancellation
+            auth_method: Authentication method - "Soft Token (Select Certificate)" or "Thales Token (Hardware)"
         """
         self.driver = None
         self.wait = None
@@ -67,6 +68,7 @@ class GovCAApprovalBot:
         self.log_callback = log_callback or self._default_log
         self.progress_callback = progress_callback or (lambda *args: None)
         self.cancel_event = cancel_event or threading.Event()
+        self.auth_method = auth_method or "Soft Token (Select Certificate)"
 
     def _default_log(self, message, level="INFO"):
         """Default logging to console"""
@@ -82,9 +84,9 @@ class GovCAApprovalBot:
         if self.cancel_event.is_set():
             raise OperationCancelledException("Operation cancelled by user")
 
-    def report_progress(self, current, total, message=""):
-        """Report progress through the callback"""
-        self.progress_callback(current, total, message)
+    def report_progress(self, current, total, message="", phase=None, total_phases=None, phase_label=None):
+        """Report progress through the callback with optional phase info"""
+        self.progress_callback(current, total, message, phase, total_phases, phase_label)
 
     def wait_for_page_ready(self, timeout=30):
         """Wait for page to be fully loaded (document ready + no pending AJAX)"""
@@ -469,17 +471,30 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
         if profile_path:
             self.log(f"Using Firefox profile: {profile_path}")
-            # Clean up lock files to allow access (required for hardware tokens)
+            # Clean up lock files to allow access
             self._cleanup_profile_locks(profile_path)
-            # Ensure SafeNet eToken PKCS#11 module is registered
-            self._ensure_safenet_module(profile_path)
+
+            # Configure based on authentication method
+            if self.auth_method == "Thales Token (Hardware)":
+                self.log("Using Thales Token (Hardware) authentication")
+                # Ensure SafeNet eToken PKCS#11 module is registered
+                self._ensure_safenet_module(profile_path)
+            else:
+                self.log("Using Soft Token (Certificate) authentication")
+
             options.add_argument("-profile")
             options.add_argument(profile_path)
         else:
             self.log("Could not find Firefox profile. Certificate authentication may fail.", "WARNING")
 
-        # Set preferences for certificate handling
-        options.set_preference("security.default_personal_cert", "Select Automatically")
+        # Set preferences for certificate handling based on auth method
+        if self.auth_method == "Soft Token (Select Certificate)":
+            # Allow user to select which certificate to use (for multiple users on same Mac)
+            options.set_preference("security.default_personal_cert", "Ask Every Time")
+            self.log("Certificate selection: User will be prompted to select certificate")
+        else:
+            # Auto-select certificate (for hardware token)
+            options.set_preference("security.default_personal_cert", "Select Automatically")
         options.set_preference("webdriver_accept_untrusted_certs", True)
         options.set_preference("accept_untrusted_certs", True)
         options.set_preference("marionette.port", 0)
@@ -543,9 +558,13 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 raise Exception("Browser closed unexpectedly after start. Please ensure Firefox is not already running and try again.")
 
             self.log("Firefox started successfully", "SUCCESS")
-            # Allow PKCS#11 module and hardware token to fully initialize
-            self.log("Waiting for SafeNet eToken to initialize...")
-            time.sleep(3)
+            # Allow initialization based on auth method
+            if self.auth_method == "Thales Token (Hardware)":
+                self.log("Waiting for SafeNet eToken to initialize...")
+                time.sleep(3)
+            else:
+                self.log("Ready for certificate selection...")
+                time.sleep(1)
 
         except Exception as e:
             error_msg = str(e)
@@ -554,7 +573,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.log("Troubleshooting:", "INFO")
                 self.log("1. Close ALL Firefox windows completely", "INFO")
                 self.log("2. Wait a few seconds and try again", "INFO")
-                self.log("3. If using eToken, ensure it is properly connected", "INFO")
+                if self.auth_method == "Thales Token (Hardware)":
+                    self.log("3. If using eToken, ensure it is properly connected", "INFO")
+                else:
+                    self.log("3. Ensure your certificate is installed in Firefox", "INFO")
             else:
                 self.log("Troubleshooting:", "INFO")
                 self.log("1. Close Firefox if open", "INFO")
@@ -571,9 +593,14 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.log("Navigating to GovCA...")
                 self.driver.get("https://govca.npki.gov.ph:8443/SecureTMSWebMgr/")
 
-                self.log("If certificate dialog appears, select your certificate", "WARNING")
-                self.log("Waiting 5 seconds...")
-                time.sleep(5)
+                if self.auth_method == "Soft Token (Select Certificate)":
+                    self.log("Please select your certificate from the dialog", "WARNING")
+                    self.log("Waiting for certificate selection (10 seconds)...")
+                    time.sleep(10)  # Give more time for user to select certificate
+                else:
+                    self.log("If certificate dialog appears, select your certificate", "WARNING")
+                    self.log("Waiting 5 seconds...")
+                    time.sleep(5)
 
                 self.check_cancelled()
 
@@ -593,7 +620,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         continue
                     else:
                         self.log(f"SSL authentication failed after {max_retries} attempts", "ERROR")
-                        self.log("Please ensure your SafeNet eToken is properly connected", "INFO")
+                        if self.auth_method == "Thales Token (Hardware)":
+                            self.log("Please ensure your SafeNet eToken is properly connected", "INFO")
+                        else:
+                            self.log("Please ensure your certificate is valid and properly installed in Firefox", "INFO")
                         raise
                 else:
                     raise
@@ -1253,7 +1283,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             while True:
                 self.check_cancelled()
                 self.log(f"Processing Request #{request_number}...")
-                self.report_progress(approved_count, -1, f"Processing request #{request_number}")
+                # Use indeterminate progress (-1 total) since we don't know total requests upfront
+                self.report_progress(request_number, -1, f"Processing request #{request_number}")
 
                 # Add comment
                 try:
@@ -2189,7 +2220,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 pass
             self.driver = None
 
-    def update_callbacks(self, log_callback=None, progress_callback=None, cancel_event=None):
+    def update_callbacks(self, log_callback=None, progress_callback=None, cancel_event=None, auth_method=None):
         """
         Update callbacks on existing bot instance.
         Allows reusing bot while updating GUI callbacks for new workflow.
@@ -2200,6 +2231,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.progress_callback = progress_callback
         if cancel_event:
             self.cancel_event = cancel_event
+        if auth_method:
+            self.auth_method = auth_method
 
     def is_session_valid(self):
         """
@@ -2276,6 +2309,13 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log("GovCA Approval Automation - Add User")
             self.log("=" * 50)
 
+            # Determine number of phases
+            total_phases = 2 if process_counterpart else 1
+            current_phase = 1
+
+            # Report initial phase
+            self.report_progress(0, 0, "Connecting...", phase=current_phase, total_phases=total_phases, phase_label=domain)
+
             # Use session persistence - reuse existing session or re-authenticate
             if not self.ensure_valid_session():
                 self.log("Failed to connect", "ERROR")
@@ -2291,6 +2331,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.log("Failed to navigate to User List", "ERROR")
                 return False
 
+            self.report_progress(0, -1, "Searching for users...", phase=current_phase, total_phases=total_phases, phase_label=domain)
+
             if not self.search_pending_users():
                 self.log(f"No pending users found in {domain}", "WARNING")
 
@@ -2298,6 +2340,9 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     counterpart = self.get_counterpart_domain(domain)
                     if counterpart:
                         self.log(f"Trying counterpart domain: {counterpart}")
+                        # Skip to phase 2 since phase 1 had no users
+                        current_phase = 2
+                        self.report_progress(0, -1, "Searching...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if not self.select_domain(counterpart):
                             return False
@@ -2309,6 +2354,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                         if not self.search_pending_users():
                             self.log(f"No pending users in {counterpart} either", "WARNING")
+                            self.report_progress(1, 1, "Completed - No users found", phase=total_phases, total_phases=total_phases, phase_label="")
                             return True
 
                         domain = counterpart
@@ -2325,6 +2371,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 suffix = "_Sign" if "Sign" in domain else "_Auth"
                 usernames_to_approve = set(f"{user}{suffix}" for user in specific_users)
                 self.log(f"Mode: Specific users - {len(usernames_to_approve)} target(s)")
+                total_users = len(usernames_to_approve)
+
+                # Report with known total
+                self.report_progress(0, total_users, f"0/{total_users} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
                 # Loop to process batches (since selections are lost on page navigation)
                 batch_number = 1
@@ -2346,6 +2396,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             # Remove processed users from the list
                             usernames_to_approve -= matched
                             self.log(f"Batch {batch_number}: Approved {approved_count} users", "SUCCESS")
+                            # Update progress
+                            self.report_progress(total_approved, total_users, f"{total_approved}/{total_users} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
                             if usernames_to_approve:
                                 # More users to process - navigate back to user list
@@ -2378,21 +2430,25 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                 if selected > 0:
                     self.log(f"{selected} user(s) ready for approval", "SUCCESS")
+                    self.report_progress(0, selected, f"0/{selected} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
                     approved_count = self.approve_users(comment)
                     if approved_count and approved_count > 0:
                         total_approved = approved_count
+                        self.report_progress(approved_count, selected, f"{approved_count}/{selected} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
             if total_approved > 0:
                 self.log(f"Successfully approved {total_approved} users in {domain}!", "SUCCESS")
 
-                # Process counterpart
+                # Process counterpart (Phase 2)
                 if process_counterpart:
                     counterpart = self.get_counterpart_domain(domain)
                     if counterpart:
+                        current_phase = 2
                         self.log("=" * 50)
                         self.log(f"Processing counterpart domain: {counterpart}")
                         self.log("=" * 50)
+                        self.report_progress(0, -1, "Switching domain...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if self.select_domain(counterpart):
                             time.sleep(3)
@@ -2400,14 +2456,20 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                 if specific_users:
                                     suffix = "_Sign" if "Sign" in counterpart else "_Auth"
                                     remaining = set(f"{user}{suffix}" for user in specific_users)
+                                    counterpart_total = len(remaining)
+                                    counterpart_approved = 0
+                                    self.report_progress(0, counterpart_total, f"0/{counterpart_total} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                                     batch_number = 1
                                     while batch_number <= 20 and remaining:
                                         self.check_cancelled()
                                         sel, matched = self.select_specific_users(list(remaining))
                                         if sel > 0:
-                                            self.approve_users(comment)
+                                            approved = self.approve_users(comment)
+                                            if approved:
+                                                counterpart_approved += approved
                                             remaining -= matched
+                                            self.report_progress(counterpart_approved, counterpart_total, f"{counterpart_approved}/{counterpart_total} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
                                             if remaining:
                                                 time.sleep(2)
                                                 if not self.navigate_to_user_list() or not self.search_pending_users():
@@ -2420,8 +2482,15 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                 else:
                                     sel = self.select_all_pending_users()
                                     if sel > 0:
-                                        self.approve_users(comment)
+                                        self.report_progress(0, sel, f"0/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
+                                        approved = self.approve_users(comment)
+                                        if approved:
+                                            self.report_progress(approved, sel, f"{approved}/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
+                            else:
+                                self.log(f"No pending users in {counterpart}", "INFO")
 
+                # Final completion
+                self.report_progress(1, 1, "Completed", phase=total_phases, total_phases=total_phases, phase_label="")
                 return True
             else:
                 self.log(f"No users selected in {domain}", "WARNING")
@@ -2430,9 +2499,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if process_counterpart:
                     counterpart = self.get_counterpart_domain(domain)
                     if counterpart:
+                        current_phase = 2
                         self.log("=" * 50)
                         self.log(f"Trying counterpart domain: {counterpart}")
                         self.log("=" * 50)
+                        self.report_progress(0, -1, "Searching...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if self.select_domain(counterpart):
                             time.sleep(3)
@@ -2445,11 +2516,14 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                     sel = self.select_all_pending_users()
 
                                 if sel > 0:
+                                    self.report_progress(0, sel, f"0/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
                                     approved = self.approve_users(comment)
                                     if approved and approved > 0:
                                         self.log(f"Successfully approved {approved} users in {counterpart}!", "SUCCESS")
+                                        self.report_progress(1, 1, "Completed", phase=total_phases, total_phases=total_phases, phase_label="")
                                         return True
 
+                self.report_progress(1, 1, "Completed - No users", phase=total_phases, total_phases=total_phases, phase_label="")
                 return False
 
         except OperationCancelledException:
@@ -2470,6 +2544,13 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log("GovCA Rejection Automation - Add User (REJECT)")
             self.log("=" * 50)
 
+            # Determine number of phases
+            total_phases = 2 if process_counterpart else 1
+            current_phase = 1
+
+            # Report initial phase
+            self.report_progress(0, 0, "Connecting...", phase=current_phase, total_phases=total_phases, phase_label=domain)
+
             # Use session persistence - reuse existing session or re-authenticate
             if not self.ensure_valid_session():
                 self.log("Failed to connect", "ERROR")
@@ -2485,6 +2566,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.log("Failed to navigate to User List", "ERROR")
                 return False
 
+            self.report_progress(0, -1, "Searching for users...", phase=current_phase, total_phases=total_phases, phase_label=domain)
+
             if not self.search_pending_users():
                 self.log(f"No pending users found in {domain}", "WARNING")
 
@@ -2492,6 +2575,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     counterpart = self.get_counterpart_domain(domain)
                     if counterpart:
                         self.log(f"Trying counterpart domain: {counterpart}")
+                        current_phase = 2
+                        self.report_progress(0, -1, "Searching...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if not self.select_domain(counterpart):
                             return False
@@ -2503,6 +2588,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                         if not self.search_pending_users():
                             self.log(f"No pending users in {counterpart} either", "WARNING")
+                            self.report_progress(1, 1, "Completed - No users found", phase=total_phases, total_phases=total_phases, phase_label="")
                             return True
 
                         domain = counterpart
@@ -2519,6 +2605,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 suffix = "_Sign" if "Sign" in domain else "_Auth"
                 usernames_to_reject = set(f"{user}{suffix}" for user in specific_users)
                 self.log(f"Mode: Specific users for REJECTION - {len(usernames_to_reject)} target(s)")
+                total_users = len(usernames_to_reject)
+                self.report_progress(0, total_users, f"0/{total_users} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
                 # Loop to process batches (since selections are lost on page navigation)
                 batch_number = 1
@@ -2540,6 +2628,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             # Remove processed users from the list
                             usernames_to_reject -= matched
                             self.log(f"Batch {batch_number}: REJECTED {rejected_count} users", "SUCCESS")
+                            self.report_progress(total_rejected, total_users, f"{total_rejected}/{total_users} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
                             if usernames_to_reject:
                                 # More users to process - navigate back to user list
@@ -2572,21 +2661,25 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                 if selected > 0:
                     self.log(f"{selected} user(s) ready for REJECTION", "WARNING")
+                    self.report_progress(0, selected, f"0/{selected} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
                     rejected_count = self.reject_users(comment)
                     if rejected_count and rejected_count > 0:
                         total_rejected = rejected_count
+                        self.report_progress(rejected_count, selected, f"{rejected_count}/{selected} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
             if total_rejected > 0:
                 self.log(f"Successfully REJECTED {total_rejected} users in {domain}!", "SUCCESS")
 
-                # Process counterpart
+                # Process counterpart (Phase 2)
                 if process_counterpart:
                     counterpart = self.get_counterpart_domain(domain)
                     if counterpart:
+                        current_phase = 2
                         self.log("=" * 50)
                         self.log(f"Processing counterpart domain for REJECTION: {counterpart}")
                         self.log("=" * 50)
+                        self.report_progress(0, -1, "Switching domain...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if self.select_domain(counterpart):
                             time.sleep(3)
@@ -2594,14 +2687,20 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                 if specific_users:
                                     suffix = "_Sign" if "Sign" in counterpart else "_Auth"
                                     remaining = set(f"{user}{suffix}" for user in specific_users)
+                                    counterpart_total = len(remaining)
+                                    counterpart_rejected = 0
+                                    self.report_progress(0, counterpart_total, f"0/{counterpart_total} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                                     batch_number = 1
                                     while batch_number <= 20 and remaining:
                                         self.check_cancelled()
                                         sel, matched = self.select_specific_users(list(remaining))
                                         if sel > 0:
-                                            self.reject_users(comment)
+                                            rejected = self.reject_users(comment)
+                                            if rejected:
+                                                counterpart_rejected += rejected
                                             remaining -= matched
+                                            self.report_progress(counterpart_rejected, counterpart_total, f"{counterpart_rejected}/{counterpart_total} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
                                             if remaining:
                                                 time.sleep(2)
                                                 if not self.navigate_to_user_list() or not self.search_pending_users():
@@ -2614,8 +2713,12 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                 else:
                                     sel = self.select_all_pending_users()
                                     if sel > 0:
-                                        self.reject_users(comment)
+                                        self.report_progress(0, sel, f"0/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
+                                        rejected = self.reject_users(comment)
+                                        if rejected:
+                                            self.report_progress(rejected, sel, f"{rejected}/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
+                self.report_progress(1, 1, "Completed", phase=total_phases, total_phases=total_phases, phase_label="")
                 return True
             else:
                 self.log(f"No users selected in {domain}", "WARNING")
@@ -2624,9 +2727,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if process_counterpart:
                     counterpart = self.get_counterpart_domain(domain)
                     if counterpart:
+                        current_phase = 2
                         self.log("=" * 50)
                         self.log(f"Trying counterpart domain for REJECTION: {counterpart}")
                         self.log("=" * 50)
+                        self.report_progress(0, -1, "Searching...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if self.select_domain(counterpart):
                             time.sleep(3)
@@ -2639,11 +2744,14 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                     sel = self.select_all_pending_users()
 
                                 if sel > 0:
+                                    self.report_progress(0, sel, f"0/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
                                     rejected = self.reject_users(comment)
                                     if rejected and rejected > 0:
                                         self.log(f"Successfully REJECTED {rejected} users in {counterpart}!", "SUCCESS")
+                                        self.report_progress(1, 1, "Completed", phase=total_phases, total_phases=total_phases, phase_label="")
                                         return True
 
+                self.report_progress(1, 1, "Completed - No users", phase=total_phases, total_phases=total_phases, phase_label="")
                 return False
 
         except OperationCancelledException:
@@ -2662,27 +2770,37 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log("GovCA Approval Automation - Revoke Certificate")
             self.log("=" * 50)
 
+            # Determine number of phases
+            total_phases = 2 if process_counterpart else 1
+            current_phase = 1
+
+            self.report_progress(0, 0, "Connecting...", phase=current_phase, total_phases=total_phases, phase_label=domain)
+
             # Use session persistence - reuse existing session or re-authenticate
             if not self.ensure_valid_session():
                 return False
 
             # Process primary domain
-            primary_count = self._process_revoke_for_domain(domain, comment)
+            self.report_progress(0, -1, "Processing...", phase=current_phase, total_phases=total_phases, phase_label=domain)
+            primary_count = self._process_revoke_for_domain(domain, comment, current_phase, total_phases)
 
             # Process counterpart domain if enabled
             if process_counterpart:
                 counterpart = self.get_counterpart_domain(domain)
                 if counterpart:
+                    current_phase = 2
                     self.log("=" * 50)
                     self.log(f"Processing counterpart domain: {counterpart}")
                     self.log("=" * 50)
-                    counterpart_count = self._process_revoke_for_domain(counterpart, comment)
+                    self.report_progress(0, -1, "Switching domain...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
+                    counterpart_count = self._process_revoke_for_domain(counterpart, comment, current_phase, total_phases)
                     self.log(f"Total approved: {primary_count + counterpart_count} revoke request(s)!", "SUCCESS")
                 else:
                     self.log(f"Successfully approved {primary_count} revoke request(s)!", "SUCCESS")
             else:
                 self.log(f"Successfully approved {primary_count} revoke request(s)!", "SUCCESS")
 
+            self.report_progress(1, 1, "Completed", phase=total_phases, total_phases=total_phases, phase_label="")
             return True
 
         except OperationCancelledException:
@@ -2692,7 +2810,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log(f"Unexpected error: {e}", "ERROR")
             return False
 
-    def _process_revoke_for_domain(self, domain, comment):
+    def _process_revoke_for_domain(self, domain, comment, phase=1, total_phases=1):
         """
         Process revoke certificate approvals for a single domain.
         Returns the number of approved requests.
@@ -2747,7 +2865,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         while True:
             self.check_cancelled()
             self.log(f"Processing Request #{request_number}...")
-            self.report_progress(approved_count, -1, f"Processing request #{request_number}")
+            self.report_progress(request_number, -1, f"Processing request #{request_number}", phase=phase, total_phases=total_phases, phase_label=domain)
 
             time.sleep(2)
 
@@ -2847,6 +2965,9 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.log(f"GovCA - Assign User Group: {domain}")
                 self.log("=" * 50)
 
+                # Single phase for single domain
+                self.report_progress(0, 0, "Connecting...", phase=1, total_phases=1, phase_label=domain)
+
                 if not WAKEPY_AVAILABLE:
                     self.log("wakepy not installed - computer may sleep during long operations", "WARNING")
 
@@ -2872,7 +2993,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 for i, group in enumerate(groups):
                     self.check_cancelled()
                     self.log(f"Processing Group {i+1}/{len(groups)}: {group['name']}")
-                    self.report_progress(i, len(groups), f"Group: {group['name']}")
+                    self.report_progress(i, len(groups), f"Group: {group['name']}", phase=1, total_phases=1, phase_label=domain)
 
                     assigned = self.assign_users_to_group(group['value'], group['name'])
                     total_assigned += assigned
@@ -2880,7 +3001,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.log("=" * 50)
                 self.log(f"Completed! Total assigned: {total_assigned}", "SUCCESS")
                 self.log("=" * 50)
-                self.report_progress(len(groups), len(groups), "Completed")
+                self.report_progress(len(groups), len(groups), "Completed", phase=1, total_phases=1, phase_label="")
 
                 return True
 
@@ -2903,6 +3024,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.log("GovCA - Assign User Groups (ALL DOMAINS)")
                 self.log("=" * 50)
 
+                self.report_progress(0, 0, "Connecting...", phase=1, total_phases=1, phase_label="All Domains")
+
                 if not WAKEPY_AVAILABLE:
                     self.log("wakepy not installed - computer may sleep during long operations", "WARNING")
                     self.log("Install with: pip install wakepy", "INFO")
@@ -2917,7 +3040,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     self.log("No domains found", "ERROR")
                     return False
 
-                self.log(f"Will process {len(domains)} domain(s)")
+                total_domains = len(domains)
+                self.log(f"Will process {total_domains} domain(s)")
 
                 total_domains_processed = 0
                 total_groups_processed = 0
@@ -2926,9 +3050,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 for d_idx, domain in enumerate(domains):
                     self.check_cancelled()
                     self.log("=" * 50)
-                    self.log(f"Domain {d_idx+1}/{len(domains)}: {domain}")
+                    self.log(f"Domain {d_idx+1}/{total_domains}: {domain}")
                     self.log("=" * 50)
-                    self.report_progress(d_idx, len(domains), f"Domain: {domain}")
+                    # Use domain index as phase for all-domains mode
+                    self.report_progress(d_idx, total_domains, f"Domain {d_idx+1}/{total_domains}", phase=d_idx+1, total_phases=total_domains, phase_label=domain)
 
                     try:
                         if not self.select_domain(domain):
@@ -2961,14 +3086,14 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                 self.log("=" * 50)
                 self.log("ALL DOMAINS COMPLETED!", "SUCCESS")
-                self.log(f"Domains processed: {total_domains_processed}/{len(domains)}")
+                self.log(f"Domains processed: {total_domains_processed}/{total_domains}")
                 self.log(f"Total groups processed: {total_groups_processed}")
                 if skipped_domains:
                     self.log(f"Skipped domains: {len(skipped_domains)}", "WARNING")
                     for d, reason in skipped_domains:
                         self.log(f"  - {d}: {reason}", "WARNING")
                 self.log("=" * 50)
-                self.report_progress(len(domains), len(domains), "Completed")
+                self.report_progress(total_domains, total_domains, "Completed", phase=total_domains, total_phases=total_domains, phase_label="")
 
                 return True
 

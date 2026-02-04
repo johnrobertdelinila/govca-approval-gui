@@ -1,12 +1,18 @@
 """
 Settings persistence for GovCA Approval Automation.
-Stores user preferences like default domain.
+Stores user preferences like default domain and authentication method.
 """
 
 import json
 import os
 
 SETTINGS_FILE = os.path.expanduser("~/.govca_approval_settings.json")
+
+# Authentication methods
+AUTH_METHODS = [
+    "Soft Token (Select Certificate)",
+    "Thales Token (Hardware)",
+]
 
 # Complete list of GovCA domains
 DOMAIN_LIST = [
@@ -72,4 +78,16 @@ def set_default_domain(domain):
     """Set the default domain in settings"""
     settings = load_settings()
     settings["default_domain"] = domain
+    save_settings(settings)
+
+
+def get_auth_method():
+    """Get the authentication method from settings"""
+    return load_settings().get("auth_method", AUTH_METHODS[0])
+
+
+def set_auth_method(method):
+    """Set the authentication method in settings"""
+    settings = load_settings()
+    settings["auth_method"] = method
     save_settings(settings)
