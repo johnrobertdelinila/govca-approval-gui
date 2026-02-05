@@ -170,18 +170,18 @@ class CardFrame(ctk.CTkFrame):
 class ResizablePanedWindow(tk.PanedWindow):
     """
     A styled PanedWindow that matches CustomTkinter appearance.
-    Provides resizable sash (divider) between panes.
+    Provides resizable sash (divider) between panes with visible grip indicator.
     """
 
     def __init__(self, parent, **kwargs):
         # Get orientation
         orient = kwargs.pop('orient', tk.VERTICAL)
 
-        # Configure PanedWindow styling
+        # Configure PanedWindow styling with wider sash for better usability
         super().__init__(
             parent,
             orient=orient,
-            sashwidth=8,
+            sashwidth=12,  # Increased from 8 for better visibility
             sashpad=0,
             bg=ColorPalette.get('bg_primary'),
             sashrelief=tk.FLAT,
@@ -189,16 +189,109 @@ class ResizablePanedWindow(tk.PanedWindow):
             opaqueresize=True
         )
 
+        # Grip indicator label
+        self._grip_label = None
+        self._grip_visible = False
+
         # Create styled sash
         self._setup_sash_styling()
 
-        # Bind for theme changes
-        self.bind('<Map>', self._update_colors)
+        # Bind for theme changes and layout updates
+        self.bind('<Map>', self._on_map)
+        self.bind('<Configure>', self._on_configure)
 
     def _setup_sash_styling(self):
         """Setup cursor change on sash hover"""
         self.bind('<Motion>', self._on_motion)
         self.bind('<Leave>', self._on_leave)
+        self.bind('<B1-Motion>', self._on_drag)
+
+    def _create_grip_indicator(self):
+        """Create visual grip handle on the sash"""
+        if self._grip_label is not None:
+            return
+
+        # Create grip label with horizontal dots pattern
+        self._grip_label = tk.Label(
+            self,
+            text="⋯ ⋯ ⋯",  # Three groups of horizontal ellipsis
+            font=("Arial", 9),
+            fg=ColorPalette.get('text_muted'),
+            bg=ColorPalette.get('bg_primary'),
+            cursor="sb_v_double_arrow",
+            padx=4,
+            pady=0
+        )
+
+        # Make grip label draggable (passes events to parent)
+        self._grip_label.bind('<B1-Motion>', self._on_grip_drag)
+        self._grip_label.bind('<Button-1>', self._on_grip_click)
+        self._grip_label.bind('<Enter>', self._on_grip_enter)
+        self._grip_label.bind('<Leave>', self._on_grip_leave)
+
+    def _on_grip_drag(self, event):
+        """Handle drag on grip label"""
+        # Convert to parent coordinates and simulate sash drag
+        x = event.x + self._grip_label.winfo_x()
+        y = event.y + self._grip_label.winfo_y()
+        try:
+            self.sash_place(0, 0, y)
+            self._update_grip_position()
+        except:
+            pass
+
+    def _on_grip_click(self, event):
+        """Handle click on grip label"""
+        pass  # Just absorb the click
+
+    def _on_grip_enter(self, event):
+        """Highlight grip on hover"""
+        if self._grip_label:
+            self._grip_label.configure(fg=ColorPalette.get('text_secondary'))
+
+    def _on_grip_leave(self, event):
+        """Reset grip on leave"""
+        if self._grip_label:
+            self._grip_label.configure(fg=ColorPalette.get('text_muted'))
+
+    def _update_grip_position(self, event=None):
+        """Position grip indicator centered on sash"""
+        if len(self.panes()) < 2:
+            return
+
+        # Create grip if not exists
+        if self._grip_label is None:
+            self._create_grip_indicator()
+
+        try:
+            sash_coord = self.sash_coord(0)
+            if sash_coord:
+                # Center grip horizontally and position on sash vertically
+                grip_width = self._grip_label.winfo_reqwidth()
+                x = (self.winfo_width() - grip_width) // 2
+                y = sash_coord[1] - 6  # Adjust for label height
+
+                # Only place if coordinates are valid
+                if x > 0 and y > 0:
+                    self._grip_label.place(x=x, y=y)
+                    self._grip_visible = True
+        except Exception:
+            pass
+
+    def _on_map(self, event=None):
+        """Handle widget mapping - update colors and grip"""
+        self._update_colors()
+        # Delay grip creation to ensure panes are added
+        self.after(100, self._update_grip_position)
+
+    def _on_configure(self, event=None):
+        """Handle resize - update grip position"""
+        if self._grip_visible:
+            self._update_grip_position()
+
+    def _on_drag(self, event):
+        """Update grip position during sash drag"""
+        self._update_grip_position()
 
     def _on_motion(self, event):
         """Change cursor when near sash"""
@@ -208,7 +301,7 @@ class ResizablePanedWindow(tk.PanedWindow):
                 sash_coord = self.sash_coord(i)
                 if sash_coord:
                     sash_y = sash_coord[1]
-                    if abs(event.y - sash_y) < 10:
+                    if abs(event.y - sash_y) < 15:  # Increased hit area
                         self.configure(cursor="sb_v_double_arrow")
                         return
             self.configure(cursor="")
@@ -222,6 +315,130 @@ class ResizablePanedWindow(tk.PanedWindow):
     def _update_colors(self, event=None):
         """Update colors when theme changes"""
         self.configure(bg=ColorPalette.get('bg_primary'))
+        if self._grip_label:
+            self._grip_label.configure(
+                fg=ColorPalette.get('text_muted'),
+                bg=ColorPalette.get('bg_primary')
+            )
+
+
+class SettingsDialog(ctk.CTkToplevel):
+    """Modal dialog for application settings"""
+
+    def __init__(self, parent, current_domain, current_auth, on_save):
+        super().__init__(parent)
+        self.title("Settings")
+        self.geometry("350x300")
+        self.resizable(False, False)
+
+        # Make modal
+        self.transient(parent)
+        self.grab_set()
+
+        # Store callback
+        self.on_save = on_save
+
+        # Center on parent
+        self.update_idletasks()
+        parent_x = parent.winfo_x()
+        parent_y = parent.winfo_y()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        dialog_width = 350
+        dialog_height = 300
+        x = parent_x + (parent_width - dialog_width) // 2
+        y = parent_y + (parent_height - dialog_height) // 2
+        self.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
+
+        # Build UI
+        self._create_widgets(current_domain, current_auth)
+
+    def _create_widgets(self, current_domain, current_auth):
+        """Create dialog widgets"""
+        # Main container with padding
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Default Domain
+        ctk.CTkLabel(
+            container,
+            text="Default Domain",
+            font=Typography.heading_sm(),
+            text_color=ColorPalette.get('text_primary')
+        ).pack(anchor="w", pady=(0, 8))
+
+        self.domain_dropdown = ctk.CTkComboBox(
+            container,
+            width=310,
+            height=36,
+            values=DOMAIN_LIST,
+            state="readonly",
+            font=Typography.body_md(),
+            dropdown_font=Typography.body_md(),
+            corner_radius=8,
+            border_width=1,
+            border_color=ColorPalette.get('border'),
+            button_color=ColorPalette.get('accent_primary'),
+            button_hover_color=ColorPalette.get('accent_secondary')
+        )
+        self.domain_dropdown.set(current_domain)
+        self.domain_dropdown.pack(pady=(0, 20))
+
+        # Authentication Method
+        ctk.CTkLabel(
+            container,
+            text="Authentication Method",
+            font=Typography.heading_sm(),
+            text_color=ColorPalette.get('text_primary')
+        ).pack(anchor="w", pady=(0, 8))
+
+        self.auth_dropdown = ctk.CTkComboBox(
+            container,
+            width=310,
+            height=36,
+            values=AUTH_METHODS,
+            state="readonly",
+            font=Typography.body_md(),
+            dropdown_font=Typography.body_md(),
+            corner_radius=8,
+            border_width=1,
+            border_color=ColorPalette.get('border'),
+            button_color=ColorPalette.get('accent_primary'),
+            button_hover_color=ColorPalette.get('accent_secondary')
+        )
+        self.auth_dropdown.set(current_auth)
+        self.auth_dropdown.pack(pady=(0, 15))
+
+        # Domain note
+        note_label = ctk.CTkLabel(
+            container,
+            text="Note: Select only domains for your region.\nAccess depends on your certificate permissions.",
+            font=ctk.CTkFont(size=11, slant="italic"),
+            text_color=ColorPalette.get('text_muted'),
+            justify="left"
+        )
+        note_label.pack(anchor="w", pady=(0, 20))
+
+        # Save & Close button
+        save_btn = ctk.CTkButton(
+            container,
+            text="Save & Close",
+            width=310,
+            height=40,
+            font=Typography.heading_sm(),
+            fg_color=ColorPalette.get('accent_primary'),
+            hover_color=ColorPalette.get('accent_secondary'),
+            corner_radius=8,
+            command=self._save_and_close
+        )
+        save_btn.pack()
+
+    def _save_and_close(self):
+        """Save settings and close dialog"""
+        domain = self.domain_dropdown.get()
+        auth_method = self.auth_dropdown.get()
+        self.on_save(domain, auth_method)
+        self.destroy()
 
 
 class AnimatedProgressBar(ctk.CTkProgressBar):
@@ -406,13 +623,36 @@ class GovCAApp(ctk.CTk):
         self._create_status_bar()
 
     def _create_title_section(self, parent):
-        """Create title section with modern styling"""
+        """Create title section with domain indicator and settings button"""
         title_frame = ctk.CTkFrame(parent, fg_color="transparent")
         title_frame.pack(fill="x", pady=(0, 15))
 
+        # LEFT: Domain indicator
+        left_frame = ctk.CTkFrame(title_frame, fg_color="transparent")
+        left_frame.pack(side="left", anchor="w")
+
+        ctk.CTkLabel(
+            left_frame,
+            text="Domain:",
+            font=Typography.body_md(),
+            text_color=ColorPalette.get('text_muted')
+        ).pack(side="left")
+
+        self.domain_indicator = ctk.CTkLabel(
+            left_frame,
+            text=get_default_domain(),
+            font=Typography.heading_sm(),
+            text_color=ColorPalette.get('accent_primary')
+        )
+        self.domain_indicator.pack(side="left", padx=(4, 0))
+
+        # CENTER: Title and subtitle
+        center_frame = ctk.CTkFrame(title_frame, fg_color="transparent")
+        center_frame.pack(side="left", expand=True)
+
         # Main title
         title_label = ctk.CTkLabel(
-            title_frame,
+            center_frame,
             text="GovCA Approval Automation",
             font=Typography.heading_xl(),
             text_color=ColorPalette.get('text_primary')
@@ -421,12 +661,32 @@ class GovCAApp(ctk.CTk):
 
         # Subtitle
         subtitle_label = ctk.CTkLabel(
-            title_frame,
+            center_frame,
             text="Automated certificate approval workflow",
             font=Typography.body_md(),
             text_color=ColorPalette.get('text_muted')
         )
         subtitle_label.pack(pady=(2, 0))
+
+        # RIGHT: Settings button
+        right_frame = ctk.CTkFrame(title_frame, fg_color="transparent")
+        right_frame.pack(side="right", anchor="e")
+
+        self.settings_btn = ctk.CTkButton(
+            right_frame,
+            text="Settings",
+            width=80,
+            height=32,
+            font=Typography.body_md(),
+            fg_color="transparent",
+            hover_color=ColorPalette.get('border'),
+            border_width=1,
+            border_color=ColorPalette.get('border'),
+            text_color=ColorPalette.get('text_secondary'),
+            corner_radius=8,
+            command=self._open_settings
+        )
+        self.settings_btn.pack()
 
     def _create_workflow_section(self, parent):
         """Create workflow selection section with card-style buttons"""
@@ -540,117 +800,35 @@ class GovCAApp(ctk.CTk):
         self._update_config_visibility()
 
     def _create_config_section(self, parent):
-        """Create configuration section with separated Settings and Workflow Options"""
+        """Create configuration section with OPTIONS only (settings moved to dialog)"""
         # Config container (scrollable)
         config_container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         config_container.pack(fill="both", expand=True, padx=10, pady=(8, 8))
 
-        # ============ SETTINGS SECTION (One-time setup) ============
-        settings_frame = ctk.CTkFrame(config_container, fg_color=ColorPalette.get('bg_secondary'), corner_radius=8)
-        settings_frame.pack(fill="x", pady=(0, 8))
+        # ============ OPTIONS SECTION ============
+        options_frame = ctk.CTkFrame(config_container, fg_color=ColorPalette.get('bg_secondary'), corner_radius=8)
+        options_frame.pack(fill="x", pady=(0, 8))
 
-        # Settings header
+        # Options header
         ctk.CTkLabel(
-            settings_frame,
-            text="SETTINGS",
+            options_frame,
+            text="OPTIONS",
             font=Typography.section_header(),
             text_color=ColorPalette.get('text_muted')
         ).pack(anchor="w", padx=12, pady=(8, 6))
 
-        # Settings content
-        settings_content = ctk.CTkFrame(settings_frame, fg_color="transparent")
-        settings_content.pack(fill="x", padx=12, pady=(0, 10))
+        # Options content
+        options_content = ctk.CTkFrame(options_frame, fg_color="transparent")
+        options_content.pack(fill="x", padx=12, pady=(0, 10))
 
-        # Row 1: Domain + Set Default + Auth
-        settings_row1 = ctk.CTkFrame(settings_content, fg_color="transparent")
-        settings_row1.pack(fill="x", pady=2)
-
-        # Domain (in its own frame for show/hide)
-        self.domain_frame = ctk.CTkFrame(settings_row1, fg_color="transparent")
-        self.domain_frame.pack(side="left")
-
-        ctk.CTkLabel(
-            self.domain_frame,
-            text="Domain:",
-            font=Typography.body_md(),
-            text_color=ColorPalette.get('text_secondary'),
-            width=60,
-            anchor="w"
-        ).pack(side="left")
-
-        self.domain_dropdown = ctk.CTkComboBox(
-            self.domain_frame,
-            width=160,
-            height=32,
-            values=DOMAIN_LIST,
-            state="readonly",
-            font=Typography.body_md(),
-            dropdown_font=Typography.body_md(),
-            corner_radius=8,
-            border_width=1,
-            border_color=ColorPalette.get('border'),
-            button_color=ColorPalette.get('accent_primary'),
-            button_hover_color=ColorPalette.get('accent_secondary')
-        )
-        self.domain_dropdown.set(get_default_domain())
-        self.domain_dropdown.pack(side="left", padx=(0, 6))
-
-        # Set as Default button
-        self.set_default_btn = ctk.CTkButton(
-            self.domain_frame,
-            text="Set Default",
-            width=85,
-            height=32,
-            font=Typography.body_sm(),
-            fg_color="transparent",
-            hover_color=ColorPalette.get('border'),
-            border_width=1,
-            border_color=ColorPalette.get('border'),
-            text_color=ColorPalette.get('text_secondary'),
-            corner_radius=8,
-            command=self._set_default_domain
-        )
-        self.set_default_btn.pack(side="left", padx=(0, 15))
-
-        # Authentication Method
-        self.auth_frame = ctk.CTkFrame(settings_row1, fg_color="transparent")
-        self.auth_frame.pack(side="left")
-
-        ctk.CTkLabel(
-            self.auth_frame,
-            text="Auth:",
-            font=Typography.body_md(),
-            text_color=ColorPalette.get('text_secondary'),
-            width=40,
-            anchor="w"
-        ).pack(side="left")
-
-        self.auth_dropdown = ctk.CTkComboBox(
-            self.auth_frame,
-            width=200,
-            height=32,
-            values=AUTH_METHODS,
-            state="readonly",
-            font=Typography.body_md(),
-            dropdown_font=Typography.body_md(),
-            corner_radius=8,
-            border_width=1,
-            border_color=ColorPalette.get('border'),
-            button_color=ColorPalette.get('accent_primary'),
-            button_hover_color=ColorPalette.get('accent_secondary'),
-            command=self._on_auth_method_change
-        )
-        self.auth_dropdown.set(get_auth_method())
-        self.auth_dropdown.pack(side="left")
-
-        # Row 2: Counterpart checkbox + All Domains toggle
-        settings_row2 = ctk.CTkFrame(settings_content, fg_color="transparent")
-        settings_row2.pack(fill="x", pady=4)
+        # Row 1: Counterpart checkbox + All Domains toggle
+        options_row1 = ctk.CTkFrame(options_content, fg_color="transparent")
+        options_row1.pack(fill="x", pady=4)
 
         # Counterpart checkbox
         self.counterpart_var = ctk.BooleanVar(value=True)
         self.counterpart_check = ctk.CTkCheckBox(
-            settings_row2,
+            options_row1,
             text="Process counterpart domain (Sign/Auth)",
             variable=self.counterpart_var,
             font=Typography.body_md(),
@@ -665,7 +843,7 @@ class GovCAApp(ctk.CTk):
         self.counterpart_check.pack(side="left")
 
         # All Domains toggle (for workflow 3 only) - in same row
-        self.all_domains_frame = ctk.CTkFrame(settings_row2, fg_color="transparent")
+        self.all_domains_frame = ctk.CTkFrame(options_row1, fg_color="transparent")
 
         self.all_domains_var = ctk.BooleanVar(value=False)
         self.all_domains_switch = ctk.CTkSwitch(
@@ -681,15 +859,6 @@ class GovCAApp(ctk.CTk):
         self.all_domains_switch.pack(side="left")
         # Initially hide all domains toggle
         self.all_domains_frame.pack_forget()
-
-        # Domain note/disclaimer
-        self.domain_note = ctk.CTkLabel(
-            settings_content,
-            text="Note: Select only domains for your region. Access depends on your certificate permissions.",
-            font=ctk.CTkFont(size=10, slant="italic"),
-            text_color=ColorPalette.get('text_muted')
-        )
-        self.domain_note.pack(fill="x", pady=(4, 0))
 
         # ============ WORKFLOW OPTIONS SECTION ============
         self.workflow_options_frame = ctk.CTkFrame(config_container, fg_color=ColorPalette.get('bg_secondary'), corner_radius=8)
@@ -884,12 +1053,10 @@ class GovCAApp(ctk.CTk):
             self._reset_start_button()
             # Hide workflow options section for assign group
             self.workflow_options_frame.pack_forget()
-            # Update domain/counterpart based on all_domains toggle
+            # Update counterpart based on all_domains toggle
             self._toggle_all_domains()
         elif workflow == "2":
-            # Revoke cert - show domain, comment, and counterpart
-            self.domain_frame.pack(side="left")
-            self.domain_dropdown.configure(state="readonly")
+            # Revoke cert - show counterpart and comment
             self.counterpart_check.pack(side="left")
             # Show workflow options section with comment only
             self.workflow_options_frame.pack(fill="x", pady=(0, 0))
@@ -904,8 +1071,6 @@ class GovCAApp(ctk.CTk):
             self._reset_start_button()
         else:
             # Add user - show all workflow options
-            self.domain_frame.pack(side="left")
-            self.domain_dropdown.configure(state="readonly")
             self.counterpart_check.pack(side="left")
             # Show workflow options section
             self.workflow_options_frame.pack(fill="x", pady=(0, 0))
@@ -915,15 +1080,12 @@ class GovCAApp(ctk.CTk):
             self._update_usernames_visibility()
 
     def _toggle_all_domains(self):
-        """Toggle domain input based on All Domains switch"""
+        """Toggle counterpart option based on All Domains switch"""
         if self.all_domains_var.get():
-            # All domains mode - hide domain input and counterpart
-            self.domain_frame.pack_forget()
+            # All domains mode - hide counterpart (not applicable)
             self.counterpart_check.pack_forget()
         else:
-            # Single domain mode - show domain input and counterpart
-            self.domain_frame.pack(side="left")
-            self.domain_dropdown.configure(state="readonly")
+            # Single domain mode - show counterpart
             self.counterpart_check.pack(side="left")
 
     def _on_batch_reject_toggle(self):
@@ -941,9 +1103,25 @@ class GovCAApp(ctk.CTk):
             # Restore START button to normal color (green)
             self._reset_start_button()
 
-    def _on_auth_method_change(self, choice):
-        """Handle authentication method change"""
-        set_auth_method(choice)
+    def _open_settings(self):
+        """Open settings dialog"""
+        dialog = SettingsDialog(
+            self,
+            current_domain=get_default_domain(),
+            current_auth=get_auth_method(),
+            on_save=self._on_settings_saved
+        )
+        dialog.focus()
+
+    def _on_settings_saved(self, domain, auth_method):
+        """Handle settings save from dialog"""
+        set_default_domain(domain)
+        set_auth_method(auth_method)
+        self._update_domain_indicator()
+
+    def _update_domain_indicator(self):
+        """Update domain indicator label"""
+        self.domain_indicator.configure(text=get_default_domain())
 
     def _reset_start_button(self):
         """Reset START button to normal green state"""
@@ -1539,12 +1717,6 @@ class GovCAApp(ctk.CTk):
         """Clear the usernames input"""
         self.usernames_text.delete("1.0", "end")
 
-    def _set_default_domain(self):
-        """Set the current domain as default"""
-        domain = self.domain_dropdown.get()
-        set_default_domain(domain)
-        messagebox.showinfo("Default Domain", f"'{domain}' has been set as the default domain.")
-
     def _clear_log(self):
         """Clear log output with confirmation"""
         confirm = messagebox.askyesno(
@@ -1652,7 +1824,7 @@ class GovCAApp(ctk.CTk):
 
         # Validate inputs
         workflow = self.selected_workflow.get()
-        domain = self.domain_dropdown.get() or "NCR00Sign"
+        domain = get_default_domain()
         comment = self.comment_entry.get().strip() or "Approved via automation"
 
         # Get specific users if applicable
@@ -1693,8 +1865,8 @@ class GovCAApp(ctk.CTk):
             self._start_animation()
 
         # Reuse existing bot or create new one
-        # Get auth method from dropdown
-        auth_method = self.auth_dropdown.get()
+        # Get auth method from saved settings
+        auth_method = get_auth_method()
 
         if self.bot is None:
             self.bot = GovCAApprovalBot(
