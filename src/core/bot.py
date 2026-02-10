@@ -929,7 +929,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     pass
 
                 # Log some sample usernames for debugging
-                if page_usernames and current_page == 1:
+                if page_usernames:
                     sample = page_usernames[:5]
                     self.log(f"Sample usernames on page: {', '.join(sample)}", "DEBUG")
 
@@ -1167,28 +1167,53 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.log("Could not find next page button", "WARNING")
                 return False
 
+            # Capture table state BEFORE clicking (for change detection)
+            previous_state = self._get_table_state()
+            fingerprint_before = self._get_table_fingerprint()
+
             # Scroll the button into view
             self.driver.execute_script("arguments[0].scrollIntoView(true);", next_btn)
             time.sleep(0.5)
 
-            # Try JavaScript click first, then native click
-            try:
-                self.driver.execute_script("arguments[0].click();", next_btn)
-            except:
-                next_btn.click()
+            # Try clicking up to 3 times, verifying page actually changed
+            for attempt in range(3):
+                try:
+                    self.driver.execute_script("arguments[0].click();", next_btn)
+                except:
+                    next_btn.click()
 
-            self.log("Clicked next page button", "SUCCESS")
-            time.sleep(5)
+                self.log("Clicked next page button", "SUCCESS")
 
-            # Wait for page to be ready
-            WebDriverWait(self.driver, 15).until(
-                lambda d: d.execute_script("return document.readyState") == "complete"
-            )
+                # Wait for AJAX table load (handles loading indicator + jQuery.active)
+                self.wait_for_table_loaded(timeout=30, previous_state=previous_state)
 
-            # Wait for table to reload
-            time.sleep(3)
+                # Verify page content actually changed
+                fingerprint_after = self._get_table_fingerprint()
+                if fingerprint_before != fingerprint_after:
+                    return True  # Page actually changed
 
-            return True
+                self.log(f"Page content unchanged after click (attempt {attempt + 1}/3), retrying...", "WARNING")
+                time.sleep(2)
+
+                # Re-find the button (may have gone stale)
+                next_btn = None
+                for selector in next_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.XPATH, selector)
+                        for elem in elements:
+                            if elem.is_displayed() and elem.is_enabled():
+                                next_btn = elem
+                                break
+                        if next_btn:
+                            break
+                    except:
+                        continue
+
+                if not next_btn:
+                    break
+
+            self.log("Page did not change after clicking next button", "WARNING")
+            return False
 
         except Exception as e:
             self.log(f"Could not navigate to next page: {e}", "WARNING")

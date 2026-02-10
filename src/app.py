@@ -968,6 +968,10 @@ class GovCAApp(ctk.CTk):
         )
         self.usernames_text.pack(side="left")
 
+        # Bind to update count on text change
+        self.usernames_text.bind('<KeyRelease>', self._update_username_count)
+        self.usernames_text.bind('<<Paste>>', lambda e: self.after(10, self._update_username_count))
+
         # Clear button for usernames
         self.clear_usernames_btn = ctk.CTkButton(
             self.usernames_frame,
@@ -993,6 +997,15 @@ class GovCAApp(ctk.CTk):
             text_color=ColorPalette.get('text_muted'),
             justify="left"
         ).pack(side="left", padx=(10, 0), anchor="n")
+
+        # Username count indicator
+        self.username_count_label = ctk.CTkLabel(
+            self.usernames_frame,
+            text="0 users entered",
+            font=Typography.body_sm(),
+            text_color=ColorPalette.get('text_muted')
+        )
+        self.username_count_label.pack(side="left", padx=(10, 0), anchor="n")
 
         # Initially hide usernames
         self.usernames_frame.pack_forget()
@@ -1716,6 +1729,32 @@ class GovCAApp(ctk.CTk):
     def _clear_usernames(self):
         """Clear the usernames input"""
         self.usernames_text.delete("1.0", "end")
+        self._update_username_count()
+
+    def _update_username_count(self, event=None):
+        """Update the username count indicator"""
+        text = self.usernames_text.get("1.0", "end").strip()
+        if text:
+            count = len([u for u in text.split("\n") if u.strip()])
+        else:
+            count = 0
+
+        # Update label text and color
+        if count == 0:
+            self.username_count_label.configure(
+                text="0 users entered",
+                text_color=ColorPalette.get('text_muted')
+            )
+        elif count == 1:
+            self.username_count_label.configure(
+                text="1 user entered",
+                text_color=ColorPalette.get('accent_primary')
+            )
+        else:
+            self.username_count_label.configure(
+                text=f"{count} users entered",
+                text_color=ColorPalette.get('accent_primary')
+            )
 
     def _clear_log(self):
         """Clear log output with confirmation"""
