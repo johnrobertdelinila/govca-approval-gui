@@ -1,4 +1,4 @@
-"""
+﻿"""
 GovCA Approval Bot - Core automation logic.
 Refactored for GUI integration with callback-based logging and progress reporting.
 """
@@ -10,7 +10,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 import time
 import threading
 import shutil
@@ -84,6 +84,28 @@ class GovCAApprovalBot:
         if self.cancel_event.is_set():
             raise OperationCancelledException("Operation cancelled by user")
 
+    def interruptible_sleep(self, seconds):
+        """Sleep that checks cancel_event every 0.5s."""
+        elapsed = 0.0
+        while elapsed < seconds:
+            self.check_cancelled()
+            wait_time = min(0.5, seconds - elapsed)
+            if self.cancel_event.wait(wait_time):
+                raise OperationCancelledException("Operation cancelled by user")
+            elapsed += wait_time
+
+    def cancellable_wait(self, timeout, condition, message=""):
+        """WebDriverWait that checks cancel_event every 2s between attempts."""
+        elapsed = 0.0
+        while elapsed < timeout:
+            self.check_cancelled()
+            wait_time = min(2, timeout - elapsed)
+            try:
+                return WebDriverWait(self.driver, wait_time).until(condition)
+            except TimeoutException:
+                elapsed += wait_time
+        raise TimeoutException(message or f"Timed out after {timeout}s")
+
     def report_progress(self, current, total, message="", phase=None, total_phases=None, phase_label=None):
         """Report progress through the callback with optional phase info"""
         self.progress_callback(current, total, message, phase, total_phases, phase_label)
@@ -108,7 +130,7 @@ class GovCAApprovalBot:
             return driver.execute_script(script)
 
         self.check_cancelled()
-        WebDriverWait(self.driver, timeout).until(page_is_ready)
+        self.cancellable_wait(timeout, page_is_ready, "Page did not become ready")
 
     def _get_table_fingerprint(self):
         """Get a fingerprint of the table content to detect when data actually changes"""
@@ -304,8 +326,9 @@ class GovCAApprovalBot:
 
         # Phase 2: Wait for table to finish loading
         try:
-            WebDriverWait(self.driver, timeout).until(
-                lambda d: table_is_ready(d) is not None
+            self.cancellable_wait(timeout,
+                lambda d: table_is_ready(d) is not None,
+                f"Table did not load within {timeout}s"
             )
             initial_result = table_is_ready(self.driver)
 
@@ -320,7 +343,7 @@ class GovCAApprovalBot:
             initial_fingerprint = self._get_table_fingerprint()
 
             for i in range(stability_checks):
-                time.sleep(check_interval)
+                self.interruptible_sleep(check_interval)
                 self.check_cancelled()
 
                 # Check for loading indicator reappearing
@@ -344,7 +367,7 @@ class GovCAApprovalBot:
                     self.log(f"Result changed: {initial_result} -> {current_result}")
                     if current_result == 'has_data':
                         # Wait additional time for data to fully render
-                        time.sleep(2)
+                        self.interruptible_sleep(2)
                         self.log("Search results loaded", "SUCCESS")
                         return True
                     elif current_result == 'empty':
@@ -376,14 +399,14 @@ class GovCAApprovalBot:
                 if not loading_visible:
                     break
                 self.log("Waiting for loading indicator to disappear...")
-                time.sleep(1)
+                self.interruptible_sleep(1)
                 self.check_cancelled()
 
             final_result = table_is_ready(self.driver)
 
             if final_result == 'has_data':
                 # Extra wait to ensure data is fully rendered
-                time.sleep(2)
+                self.interruptible_sleep(2)
                 self.log("Search results loaded", "SUCCESS")
                 return True
             elif final_result == 'empty':
@@ -392,7 +415,7 @@ class GovCAApprovalBot:
             else:
                 # Still loading after all checks - wait more
                 self.log("Table still loading, waiting additional time...")
-                time.sleep(5)
+                self.interruptible_sleep(5)
                 final_final = table_is_ready(self.driver)
                 if final_final == 'has_data':
                     self.log("Search results loaded (delayed)", "SUCCESS")
@@ -539,7 +562,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.wait = WebDriverWait(self.driver, 30)
 
             # Give browser a moment to stabilize before maximizing
-            time.sleep(1)
+            self.interruptible_sleep(1)
 
             # Verify browser is still alive before maximizing
             try:
@@ -561,10 +584,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             # Allow initialization based on auth method
             if self.auth_method == "Thales Token (Hardware)":
                 self.log("Waiting for SafeNet eToken to initialize...")
-                time.sleep(3)
+                self.interruptible_sleep(3)
             else:
                 self.log("Ready for certificate selection...")
-                time.sleep(1)
+                self.interruptible_sleep(1)
 
         except Exception as e:
             error_msg = str(e)
@@ -596,11 +619,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if self.auth_method == "Soft Token (Select Certificate)":
                     self.log("Please select your certificate from the dialog", "WARNING")
                     self.log("Waiting for certificate selection (10 seconds)...")
-                    time.sleep(10)  # Give more time for user to select certificate
+                    self.interruptible_sleep(10)  # Give more time for user to select certificate
                 else:
                     self.log("If certificate dialog appears, select your certificate", "WARNING")
                     self.log("Waiting 5 seconds...")
-                    time.sleep(5)
+                    self.interruptible_sleep(5)
 
                 self.check_cancelled()
 
@@ -616,7 +639,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if "nssFailure" in error_msg or "neterror" in error_msg:
                     if attempt < max_retries - 1:
                         self.log(f"SSL/certificate error, retrying... ({attempt + 1}/{max_retries})", "WARNING")
-                        time.sleep(5)
+                        self.interruptible_sleep(5)
                         continue
                     else:
                         self.log(f"SSL authentication failed after {max_retries} attempts", "ERROR")
@@ -692,7 +715,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             base_url = self.driver.current_url.split('?')[0]
             approval_request_url = base_url + "?m=approval&c=approve_list"
             self.driver.get(approval_request_url)
-            time.sleep(3)
+            self.interruptible_sleep(3)
 
             self.check_cancelled()
 
@@ -701,7 +724,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 return True
             else:
                 self.log("Verifying page load...")
-                time.sleep(2)
+                self.interruptible_sleep(2)
                 if "approve_list" in self.driver.current_url or ("approval" in self.driver.current_url and "c=approve" in self.driver.current_url):
                     self.log("Approval Request List page loaded", "SUCCESS")
                     return True
@@ -722,7 +745,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             base_url = self.driver.current_url.split('?')[0]
             assign_group_url = base_url + "?m=user&c=user_group"
             self.driver.get(assign_group_url)
-            time.sleep(3)
+            self.interruptible_sleep(3)
 
             self.check_cancelled()
 
@@ -731,7 +754,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 return True
             else:
                 self.log("Verifying page load...")
-                time.sleep(2)
+                self.interruptible_sleep(2)
                 if "user_group" in self.driver.current_url:
                     self.log("Assign User Group page loaded", "SUCCESS")
                     return True
@@ -758,10 +781,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             for filter_attempt in range(max_filter_retries):
                 try:
                     self.check_cancelled()
-                    WebDriverWait(self.driver, 10).until(
+                    self.cancellable_wait(10,
                         EC.presence_of_element_located((By.ID, "cmbStatus"))
                     )
-                    time.sleep(1)
+                    self.interruptible_sleep(1)
 
                     status_dropdown = self.driver.find_element(By.ID, "cmbStatus")
                     select = Select(status_dropdown)
@@ -773,13 +796,13 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                     self.log("User Status set to 'Pending'", "SUCCESS")
                     filter_set = True
-                    time.sleep(1)
+                    self.interruptible_sleep(1)
                     break
 
                 except Exception as e:
                     if filter_attempt < max_filter_retries - 1:
                         self.log(f"Could not set filter (attempt {filter_attempt + 1}/{max_filter_retries}): {e}", "WARNING")
-                        time.sleep(2)
+                        self.interruptible_sleep(2)
                     else:
                         self.log(f"Failed to set User Status filter after {max_filter_retries} attempts", "WARNING")
 
@@ -823,7 +846,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         self.log("Selecting users for approval...")
 
         try:
-            time.sleep(2)
+            self.interruptible_sleep(2)
 
             # Try "Select All" checkbox first
             try:
@@ -831,7 +854,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if select_all.is_displayed() and select_all.is_enabled():
                     self.driver.execute_script("arguments[0].click();", select_all)
                     self.log("Clicked 'Select All' checkbox", "SUCCESS")
-                    time.sleep(1)
+                    self.interruptible_sleep(1)
 
                     checkboxes = self.driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox']:checked")
                     selected_count = len([cb for cb in checkboxes if cb.get_attribute('id') not in ['showAdmin', 'chkAllBatch']])
@@ -893,10 +916,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 self.check_cancelled()
                 self.log(f"Checking Page {current_page}...")
 
-                time.sleep(5)
+                self.interruptible_sleep(5)
 
                 try:
-                    WebDriverWait(self.driver, 15).until(
+                    self.cancellable_wait(15,
                         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='checkbox'][name='chkBatch']"))
                     )
                 except:
@@ -907,7 +930,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 checkbox_count = len(self.driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox'][name='chkBatch']"))
                 self.log(f"Found {checkbox_count} data rows on page {current_page}")
 
-                time.sleep(3)
+                self.interruptible_sleep(3)
 
                 # Get usernames on current page
                 page_usernames = []
@@ -1029,25 +1052,26 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
     def has_next_page(self):
         """Check if there's a Next page button"""
+        self.check_cancelled()
         try:
             # Wait for page to be ready before checking pagination
             try:
-                WebDriverWait(self.driver, 10).until(
+                self.cancellable_wait(10,
                     lambda d: d.execute_script("return document.readyState") == "complete"
                 )
-                WebDriverWait(self.driver, 5).until(
+                self.cancellable_wait(5,
                     lambda d: d.execute_script("return document.body !== null")
                 )
             except:
                 self.log("Page not ready for pagination check, waiting...", "DEBUG")
-                time.sleep(3)
+                self.interruptible_sleep(3)
 
             # Scroll to bottom of page to reveal pagination controls
             try:
                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             except Exception as scroll_err:
                 self.log(f"Could not scroll: {scroll_err}", "DEBUG")
-            time.sleep(2)
+            self.interruptible_sleep(2)
 
             # Try multiple selectors for pagination
             next_selectors = [
@@ -1075,6 +1099,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             ]
 
             for selector in next_selectors:
+                self.check_cancelled()
                 try:
                     elements = self.driver.find_elements(By.XPATH, selector)
                     for elem in elements:
@@ -1132,6 +1157,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
     def go_to_next_page(self):
         """Navigate to next page by clicking the pagination button"""
+        self.check_cancelled()
         try:
             next_btn = None
 
@@ -1177,6 +1203,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             # Try clicking up to 3 times, verifying page actually changed
             for attempt in range(3):
+                self.check_cancelled()
                 try:
                     self.driver.execute_script("arguments[0].click();", next_btn)
                 except:
@@ -1193,7 +1220,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     return True  # Page actually changed
 
                 self.log(f"Page content unchanged after click (attempt {attempt + 1}/3), retrying...", "WARNING")
-                time.sleep(2)
+                self.interruptible_sleep(2)
 
                 # Re-find the button (may have gone stale)
                 next_btn = None
@@ -1246,7 +1273,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         try:
             # Click Batch Response button
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1)
+            self.interruptible_sleep(1)
 
             batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
             self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
@@ -1270,7 +1297,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             return driver.execute_script("return document.readyState") == "complete"
                     return False
 
-                WebDriverWait(self.driver, 15).until(approval_page_loaded)
+                self.cancellable_wait(15, approval_page_loaded)
 
                 all_windows = self.driver.window_handles
                 if len(all_windows) > 1:
@@ -1280,7 +1307,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             self.driver.switch_to.window(window)
                             break
 
-                    WebDriverWait(self.driver, 10).until(
+                    self.cancellable_wait(10,
                         lambda driver: driver.execute_script("return document.readyState") == "complete"
                     )
                 else:
@@ -1289,7 +1316,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             except Exception as e:
                 self.log(f"Navigation wait timeout: {e}", "WARNING")
 
-            WebDriverWait(self.driver, 15).until(
+            self.cancellable_wait(15,
                 lambda driver: driver.execute_script("return document.readyState") == "complete"
             )
 
@@ -1313,7 +1340,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                 # Add comment
                 try:
-                    comment_field = WebDriverWait(self.driver, 15).until(
+                    comment_field = self.cancellable_wait(15,
                         EC.presence_of_element_located((By.ID, "txtComment"))
                     )
                     WebDriverWait(self.driver, 5).until(
@@ -1334,7 +1361,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                 # Click Approve button
                 try:
-                    approve_button = WebDriverWait(self.driver, 15).until(
+                    approve_button = self.cancellable_wait(15,
                         EC.element_to_be_clickable((By.ID, "btnApprove"))
                     )
                     self.driver.execute_script("arguments[0].scrollIntoView(true);", approve_button)
@@ -1364,18 +1391,18 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                 # Wait for page transition
                 self.log("Waiting for page transition...")
-                time.sleep(7)
+                self.interruptible_sleep(7)
 
                 self.check_cancelled()
 
                 # Wait for page ready
                 try:
-                    WebDriverWait(self.driver, 20).until(
+                    self.cancellable_wait(20,
                         lambda driver: driver.execute_script("return document.readyState") == "complete"
                     )
-                    time.sleep(2)
+                    self.interruptible_sleep(2)
                 except:
-                    time.sleep(5)
+                    self.interruptible_sleep(5)
 
                 # Check for completion
                 current_url = self.driver.current_url
@@ -1400,7 +1427,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 except:
                     pass
 
-                for poll_attempt in range(8):
+                for poll_attempt in range(15):
                     self.check_cancelled()
                     try:
                         candidates = []
@@ -1432,11 +1459,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         if next_request_found:
                             break
 
-                        if poll_attempt < 7:
-                            time.sleep(2)  # Wait between polls
+                        if poll_attempt < 14:
+                            self.interruptible_sleep(2)  # Wait between polls
                     except:
-                        if poll_attempt < 7:
-                            time.sleep(2)
+                        if poll_attempt < 14:
+                            self.interruptible_sleep(2)
 
                 if next_request_found and next_request_button:
                     self.log("Found Next Request button - clicking...")
@@ -1446,15 +1473,15 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     self.log("Clicked Next Request button", "SUCCESS")
 
                     try:
-                        WebDriverWait(self.driver, 15).until(
+                        self.cancellable_wait(15,
                             EC.presence_of_element_located((By.ID, "txtComment"))
                         )
-                        WebDriverWait(self.driver, 10).until(
+                        self.cancellable_wait(10,
                             lambda driver: driver.execute_script("return document.readyState") == "complete"
                         )
                         self.log("Approval form loaded", "SUCCESS")
                     except:
-                        time.sleep(3)
+                        self.interruptible_sleep(3)
 
                     request_number += 1
                     continue
@@ -1464,14 +1491,15 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     approve_btn = self.driver.find_element(By.ID, "btnApprove")
                     comment_field = self.driver.find_elements(By.ID, "txtComment")
                     if comment_field and approve_btn.is_displayed() and approve_btn.is_enabled():
-                        if "infoMsg" not in current_url:
+                        fresh_url = self.driver.current_url
+                        if "infoMsg" not in fresh_url:
                             self.log("Next request loaded automatically - continuing...", "SUCCESS")
                             request_number += 1
                             continue
                 except:
                     pass
 
-                # Check for cancel only
+                # Check for definitive exit conditions
                 try:
                     cancel_exists = len(self.driver.find_elements(By.XPATH, "//input[@value='Cancel']")) > 0
                     approve_exists = len(self.driver.find_elements(By.ID, "btnApprove")) > 0
@@ -1480,9 +1508,25 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         self.log("Found Cancel button only - all requests processed", "SUCCESS")
                         break
 
-                    if not approve_exists:
+                    if not cancel_exists and not approve_exists:
                         self.log("All requests processed", "SUCCESS")
                         break
+
+                    # Approve button exists — page may still be loading. Wait and retry.
+                    if approve_exists:
+                        self.log("Approve button detected, waiting for page to stabilize...", "WARNING")
+                        self.interruptible_sleep(5)
+                        try:
+                            approve_btn = self.driver.find_element(By.ID, "btnApprove")
+                            comment_field = self.driver.find_elements(By.ID, "txtComment")
+                            if comment_field and approve_btn.is_displayed() and approve_btn.is_enabled():
+                                fresh_url = self.driver.current_url
+                                if "infoMsg" not in fresh_url:
+                                    self.log("Next request loaded after extended wait - continuing...", "SUCCESS")
+                                    request_number += 1
+                                    continue
+                        except:
+                            pass
                 except:
                     pass
 
@@ -1507,7 +1551,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         try:
             # Click Batch Response button
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1)
+            self.interruptible_sleep(1)
 
             batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
             self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
@@ -1531,7 +1575,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             return driver.execute_script("return document.readyState") == "complete"
                     return False
 
-                WebDriverWait(self.driver, 15).until(rejection_page_loaded)
+                self.cancellable_wait(15, rejection_page_loaded)
 
                 all_windows = self.driver.window_handles
                 if len(all_windows) > 1:
@@ -1541,7 +1585,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             self.driver.switch_to.window(window)
                             break
 
-                    WebDriverWait(self.driver, 10).until(
+                    self.cancellable_wait(10,
                         lambda driver: driver.execute_script("return document.readyState") == "complete"
                     )
                 else:
@@ -1550,7 +1594,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             except Exception as e:
                 self.log(f"Navigation wait timeout: {e}", "WARNING")
 
-            WebDriverWait(self.driver, 15).until(
+            self.cancellable_wait(15,
                 lambda driver: driver.execute_script("return document.readyState") == "complete"
             )
 
@@ -1573,7 +1617,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                 # Add comment
                 try:
-                    comment_field = WebDriverWait(self.driver, 15).until(
+                    comment_field = self.cancellable_wait(15,
                         EC.presence_of_element_located((By.ID, "txtComment"))
                     )
                     WebDriverWait(self.driver, 5).until(
@@ -1594,7 +1638,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                 # Click Reject button
                 try:
-                    reject_button = WebDriverWait(self.driver, 15).until(
+                    reject_button = self.cancellable_wait(15,
                         EC.element_to_be_clickable((By.ID, "btnReject"))
                     )
                     self.driver.execute_script("arguments[0].scrollIntoView(true);", reject_button)
@@ -1624,18 +1668,18 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                 # Wait for page transition
                 self.log("Waiting for page transition...")
-                time.sleep(7)
+                self.interruptible_sleep(7)
 
                 self.check_cancelled()
 
                 # Wait for page ready
                 try:
-                    WebDriverWait(self.driver, 20).until(
+                    self.cancellable_wait(20,
                         lambda driver: driver.execute_script("return document.readyState") == "complete"
                     )
-                    time.sleep(2)
+                    self.interruptible_sleep(2)
                 except:
-                    time.sleep(5)
+                    self.interruptible_sleep(5)
 
                 # Check for completion
                 current_url = self.driver.current_url
@@ -1663,7 +1707,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 except:
                     pass
 
-                for poll_attempt in range(8):
+                for poll_attempt in range(15):
                     self.check_cancelled()
                     try:
                         candidates = []
@@ -1695,11 +1739,11 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         if next_request_found:
                             break
 
-                        if poll_attempt < 7:
-                            time.sleep(2)  # Wait between polls
+                        if poll_attempt < 14:
+                            self.interruptible_sleep(2)  # Wait between polls
                     except:
-                        if poll_attempt < 7:
-                            time.sleep(2)
+                        if poll_attempt < 14:
+                            self.interruptible_sleep(2)
 
                 if next_request_found and next_request_button:
                     self.log("Found Next Request button - clicking...")
@@ -1709,15 +1753,15 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     self.log("Clicked Next Request button", "SUCCESS")
 
                     try:
-                        WebDriverWait(self.driver, 15).until(
+                        self.cancellable_wait(15,
                             EC.presence_of_element_located((By.ID, "txtComment"))
                         )
-                        WebDriverWait(self.driver, 10).until(
+                        self.cancellable_wait(10,
                             lambda driver: driver.execute_script("return document.readyState") == "complete"
                         )
                         self.log("Rejection form loaded", "SUCCESS")
                     except:
-                        time.sleep(3)
+                        self.interruptible_sleep(3)
 
                     request_number += 1
                     continue
@@ -1727,14 +1771,15 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     reject_btn = self.driver.find_element(By.ID, "btnReject")
                     comment_field = self.driver.find_elements(By.ID, "txtComment")
                     if comment_field and reject_btn.is_displayed() and reject_btn.is_enabled():
-                        if "infoMsg" not in current_url:
+                        fresh_url = self.driver.current_url
+                        if "infoMsg" not in fresh_url:
                             self.log("Next request loaded automatically - continuing...", "SUCCESS")
                             request_number += 1
                             continue
                 except:
                     pass
 
-                # Check for cancel only
+                # Check for definitive exit conditions
                 try:
                     cancel_exists = len(self.driver.find_elements(By.XPATH, "//input[@value='Cancel']")) > 0
                     reject_exists = len(self.driver.find_elements(By.ID, "btnReject")) > 0
@@ -1743,9 +1788,25 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         self.log("Found Cancel button only - all requests processed", "SUCCESS")
                         break
 
-                    if not reject_exists:
+                    if not cancel_exists and not reject_exists:
                         self.log("All requests processed", "SUCCESS")
                         break
+
+                    # Reject button exists — page may still be loading. Wait and retry.
+                    if reject_exists:
+                        self.log("Reject button detected, waiting for page to stabilize...", "WARNING")
+                        self.interruptible_sleep(5)
+                        try:
+                            reject_btn = self.driver.find_element(By.ID, "btnReject")
+                            comment_field = self.driver.find_elements(By.ID, "txtComment")
+                            if comment_field and reject_btn.is_displayed() and reject_btn.is_enabled():
+                                fresh_url = self.driver.current_url
+                                if "infoMsg" not in fresh_url:
+                                    self.log("Next request loaded after extended wait - continuing...", "SUCCESS")
+                                    request_number += 1
+                                    continue
+                        except:
+                            pass
                 except:
                     pass
 
@@ -1768,7 +1829,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         self.log("Retrieving available groups...")
 
         # Wait for page to be fully ready
-        time.sleep(3)
+        self.interruptible_sleep(3)
 
         # Try CSS selector first (fastest approach based on what works)
         group_dropdown = None
@@ -2030,7 +2091,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                     if not still_active:
                         self.log("AJAX request completed")
-                        time.sleep(1)  # Brief delay for DOM to update
+                        self.interruptible_sleep(1)  # Brief delay for DOM to update
                         break
 
                     # Log progress every 5 seconds
@@ -2082,7 +2143,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 stable_count = 0
                 last_count = -1
 
-            time.sleep(check_interval)
+            self.interruptible_sleep(check_interval)
 
         self.log("Timeout waiting for users", "WARNING")
         return self._find_user_dropdown()
@@ -2110,7 +2171,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log(f"Selected group: {group_name}", "SUCCESS")
 
             # Wait for AJAX and user dropdown to load with state change detection
-            time.sleep(1)  # Brief wait for JavaScript event handlers
+            self.interruptible_sleep(1)  # Brief wait for JavaScript event handlers
             user_dropdown = self._wait_for_user_dropdown_loaded(timeout=60, previous_state=previous_state)
             if not user_dropdown:
                 self.log("Could not find user dropdown", "ERROR")
@@ -2213,18 +2274,18 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     except:
                         pass
 
-                time.sleep(2)
+                self.interruptible_sleep(2)
                 assigned += batch_count
                 self.report_progress(assigned, total_users, f"Assigned {assigned}/{total_users} users")
 
                 # Re-select group after batch
-                time.sleep(1)
+                self.interruptible_sleep(1)
                 previous_state = self._get_user_dropdown_state()
                 group_dropdown = self._find_group_dropdown()
                 if group_dropdown:
                     group_select = Select(group_dropdown)
                     group_select.select_by_value(group_value)
-                time.sleep(1)
+                self.interruptible_sleep(1)
                 # Wait with state detection for next batch
                 user_dropdown = self._wait_for_user_dropdown_loaded(timeout=60, previous_state=previous_state)
 
@@ -2372,7 +2433,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         if not self.select_domain(counterpart):
                             return False
 
-                        time.sleep(3)
+                        self.interruptible_sleep(3)
 
                         if not self.navigate_to_user_list():
                             return False
@@ -2427,7 +2488,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             if usernames_to_approve:
                                 # More users to process - navigate back to user list
                                 self.log(f"Remaining users: {len(usernames_to_approve)}")
-                                time.sleep(2)
+                                self.interruptible_sleep(2)
 
                                 # Navigate back to search for more users
                                 if not self.navigate_to_user_list():
@@ -2476,7 +2537,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         self.report_progress(0, -1, "Switching domain...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if self.select_domain(counterpart):
-                            time.sleep(3)
+                            self.interruptible_sleep(3)
                             if self.navigate_to_user_list() and self.search_pending_users():
                                 if specific_users:
                                     suffix = "_Sign" if "Sign" in counterpart else "_Auth"
@@ -2496,7 +2557,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                             remaining -= matched
                                             self.report_progress(counterpart_approved, counterpart_total, f"{counterpart_approved}/{counterpart_total} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
                                             if remaining:
-                                                time.sleep(2)
+                                                self.interruptible_sleep(2)
                                                 if not self.navigate_to_user_list() or not self.search_pending_users():
                                                     break
                                                 batch_number += 1
@@ -2531,7 +2592,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         self.report_progress(0, -1, "Searching...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if self.select_domain(counterpart):
-                            time.sleep(3)
+                            self.interruptible_sleep(3)
                             if self.navigate_to_user_list() and self.search_pending_users():
                                 if specific_users:
                                     suffix = "_Sign" if "Sign" in counterpart else "_Auth"
@@ -2554,8 +2615,17 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         except OperationCancelledException:
             self.log("Cancelled by user", "WARNING")
             return False
+        except WebDriverException as e:
+            if self.cancel_event.is_set():
+                self.log("Operation cancelled by user", "WARNING")
+            else:
+                self.log(f"Browser error: {e}", "ERROR")
+            return False
         except Exception as e:
-            self.log(f"Unexpected error: {e}", "ERROR")
+            if self.cancel_event.is_set():
+                self.log("Operation cancelled by user", "WARNING")
+            else:
+                self.log(f"Unexpected error: {e}", "ERROR")
             return False
 
     def run_rejection_process(self, domain="NCR00Sign", comment="Rejected via automation",
@@ -2606,7 +2676,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         if not self.select_domain(counterpart):
                             return False
 
-                        time.sleep(3)
+                        self.interruptible_sleep(3)
 
                         if not self.navigate_to_user_list():
                             return False
@@ -2658,7 +2728,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                             if usernames_to_reject:
                                 # More users to process - navigate back to user list
                                 self.log(f"Remaining users: {len(usernames_to_reject)}")
-                                time.sleep(2)
+                                self.interruptible_sleep(2)
 
                                 # Navigate back to search for more users
                                 if not self.navigate_to_user_list():
@@ -2707,7 +2777,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         self.report_progress(0, -1, "Switching domain...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if self.select_domain(counterpart):
-                            time.sleep(3)
+                            self.interruptible_sleep(3)
                             if self.navigate_to_user_list() and self.search_pending_users():
                                 if specific_users:
                                     suffix = "_Sign" if "Sign" in counterpart else "_Auth"
@@ -2727,7 +2797,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                             remaining -= matched
                                             self.report_progress(counterpart_rejected, counterpart_total, f"{counterpart_rejected}/{counterpart_total} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
                                             if remaining:
-                                                time.sleep(2)
+                                                self.interruptible_sleep(2)
                                                 if not self.navigate_to_user_list() or not self.search_pending_users():
                                                     break
                                                 batch_number += 1
@@ -2759,7 +2829,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         self.report_progress(0, -1, "Searching...", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
                         if self.select_domain(counterpart):
-                            time.sleep(3)
+                            self.interruptible_sleep(3)
                             if self.navigate_to_user_list() and self.search_pending_users():
                                 if specific_users:
                                     suffix = "_Sign" if "Sign" in counterpart else "_Auth"
@@ -2782,8 +2852,17 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         except OperationCancelledException:
             self.log("Cancelled by user", "WARNING")
             return False
+        except WebDriverException as e:
+            if self.cancel_event.is_set():
+                self.log("Operation cancelled by user", "WARNING")
+            else:
+                self.log(f"Browser error: {e}", "ERROR")
+            return False
         except Exception as e:
-            self.log(f"Unexpected error: {e}", "ERROR")
+            if self.cancel_event.is_set():
+                self.log("Operation cancelled by user", "WARNING")
+            else:
+                self.log(f"Unexpected error: {e}", "ERROR")
             return False
 
     def run_revoke_certificate_approval(self, domain="NCR00Sign", comment="Approved via automation", process_counterpart=False):
@@ -2831,8 +2910,17 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         except OperationCancelledException:
             self.log("Cancelled by user", "WARNING")
             return False
+        except WebDriverException as e:
+            if self.cancel_event.is_set():
+                self.log("Operation cancelled by user", "WARNING")
+            else:
+                self.log(f"Browser error: {e}", "ERROR")
+            return False
         except Exception as e:
-            self.log(f"Unexpected error: {e}", "ERROR")
+            if self.cancel_event.is_set():
+                self.log("Operation cancelled by user", "WARNING")
+            else:
+                self.log(f"Unexpected error: {e}", "ERROR")
             return False
 
     def _process_revoke_for_domain(self, domain, comment, phase=1, total_phases=1):
@@ -2867,7 +2955,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 except:
                     select.select_by_visible_text("Revoke Certificate")
 
-            time.sleep(1)
+            self.interruptible_sleep(1)
 
             # Capture table state before search
             previous_state = self._get_table_state()
@@ -2892,7 +2980,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log(f"Processing Request #{request_number}...")
             self.report_progress(request_number, -1, f"Processing request #{request_number}", phase=phase, total_phases=total_phases, phase_label=domain)
 
-            time.sleep(2)
+            self.interruptible_sleep(2)
 
             respond_buttons = self.driver.find_elements(By.XPATH, "//a[text()='Respond']")
             if not respond_buttons:
@@ -2915,10 +3003,10 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log("Clicked Respond button", "SUCCESS")
 
             # Wait for approval page
-            time.sleep(5)
+            self.interruptible_sleep(5)
 
             try:
-                comment_field = WebDriverWait(self.driver, 15).until(
+                comment_field = self.cancellable_wait(15,
                     EC.presence_of_element_located((By.ID, "txtComment"))
                 )
                 comment_field.clear()
@@ -2937,7 +3025,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     pass
 
                 approved_count += 1
-                time.sleep(3)
+                self.interruptible_sleep(3)
 
             except Exception as e:
                 self.log(f"Error approving request: {e}", "ERROR")
@@ -2965,7 +3053,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     except:
                         select.select_by_visible_text("Revoke Certificate")
 
-                time.sleep(1)
+                self.interruptible_sleep(1)
                 previous_state = self._get_table_state()
                 search_button = self.driver.find_element(By.ID, "btnSearch")
                 search_button.click()
@@ -3033,8 +3121,17 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             except OperationCancelledException:
                 self.log("Cancelled by user", "WARNING")
                 return False
+            except WebDriverException as e:
+                if self.cancel_event.is_set():
+                    self.log("Operation cancelled by user", "WARNING")
+                else:
+                    self.log(f"Browser error: {e}", "ERROR")
+                return False
             except Exception as e:
-                self.log(f"Unexpected error: {e}", "ERROR")
+                if self.cancel_event.is_set():
+                    self.log("Operation cancelled by user", "WARNING")
+                else:
+                    self.log(f"Unexpected error: {e}", "ERROR")
                 return False
 
     def run_assign_user_groups_all_domains(self):
@@ -3125,6 +3222,15 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             except OperationCancelledException:
                 self.log("Cancelled by user", "WARNING")
                 return False
+            except WebDriverException as e:
+                if self.cancel_event.is_set():
+                    self.log("Operation cancelled by user", "WARNING")
+                else:
+                    self.log(f"Browser error: {e}", "ERROR")
+                return False
             except Exception as e:
-                self.log(f"Unexpected error: {e}", "ERROR")
+                if self.cancel_event.is_set():
+                    self.log("Operation cancelled by user", "WARNING")
+                else:
+                    self.log(f"Unexpected error: {e}", "ERROR")
                 return False

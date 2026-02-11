@@ -516,6 +516,10 @@ class GovCAApp(ctk.CTk):
         self.bot = None
         self.session_valid = False
 
+        # Stop escalation timers
+        self._escalate_timer_id = None
+        self._finalize_timer_id = None
+
         # Track window size for responsive layout
         self._last_width = 950
         self._last_height = 800
@@ -1813,6 +1817,7 @@ class GovCAApp(ctk.CTk):
 
         # Check if thread finished
         if self.automation_thread and not self.automation_thread.is_alive():
+            self._cancel_escalation_timers()
             was_running = self.is_running
             self.is_running = False
             self.automation_thread = None
@@ -1966,7 +1971,10 @@ class GovCAApp(ctk.CTk):
             except OperationCancelledException:
                 self.log_buffer.add("Operation cancelled by user", "WARNING")
             except Exception as e:
-                self.log_buffer.add(f"Error: {e}", "ERROR")
+                if self.cancel_event.is_set():
+                    self.log_buffer.add("Operation cancelled by user", "WARNING")
+                else:
+                    self.log_buffer.add(f"Error: {e}", "ERROR")
             # NOTE: Browser is intentionally kept open for session reuse
             # User can close it manually via "Close Browser" button
 
@@ -1981,13 +1989,53 @@ class GovCAApp(ctk.CTk):
         self._log(f"Started workflow {workflow}: {workflow_names.get(workflow, 'Unknown')}", "INFO")
 
     def _stop_automation(self):
-        """Stop the automation process"""
+        """Stop the automation process with escalation."""
         if not self.is_running:
             return
 
         self._log("Stopping automation...", "WARNING")
         self.cancel_event.set()
         self.status_label.configure(text="Stopping...")
+
+        # Schedule escalation: force-quit browser after 5s if thread still alive
+        self._escalate_timer_id = self.after(5000, self._escalate_stop)
+
+    def _escalate_stop(self):
+        """Escalate stop by force-quitting the browser driver."""
+        self._escalate_timer_id = None
+        if self.automation_thread and self.automation_thread.is_alive():
+            self._log("Cooperative stop timed out, force-quitting browser...", "WARNING")
+            if self.bot and self.bot.driver:
+                try:
+                    self.bot.driver.quit()
+                except Exception:
+                    pass
+                self.bot.driver = None
+            # Schedule final cleanup after another 5s
+            self._finalize_timer_id = self.after(5000, self._finalize_stop)
+
+    def _finalize_stop(self):
+        """Final cleanup: force-reset UI state regardless of thread status."""
+        self._finalize_timer_id = None
+        if self.is_running:
+            self._log("Force-resetting UI state", "WARNING")
+            self.is_running = False
+            self.automation_thread = None
+            self._update_button_states()
+            self.status_label.configure(text="Stopped (force)")
+            if not self.logs_visible:
+                self._stop_animation()
+                self._show_result(success=False)
+            self._update_session_status()
+
+    def _cancel_escalation_timers(self):
+        """Cancel any pending escalation timers."""
+        if self._escalate_timer_id is not None:
+            self.after_cancel(self._escalate_timer_id)
+            self._escalate_timer_id = None
+        if self._finalize_timer_id is not None:
+            self.after_cancel(self._finalize_timer_id)
+            self._finalize_timer_id = None
 
     def on_closing(self):
         """Handle window close"""
