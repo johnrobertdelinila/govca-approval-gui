@@ -1265,7 +1265,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         except:
             return False, None
 
-    def approve_users(self, comment="Approved via automation"):
+    def approve_users(self, comment="Approved via automation", total_requests=None):
         """Add comment and click Approve button - loops until all users approved"""
         self.check_cancelled()
         self.log("Starting approval process...")
@@ -1334,9 +1334,12 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             while True:
                 self.check_cancelled()
-                self.log(f"Processing Request #{request_number}...")
-                # Use indeterminate progress (-1 total) since we don't know total requests upfront
-                self.report_progress(request_number, -1, f"Processing request #{request_number}")
+                if total_requests:
+                    self.log(f"Processing Request #{request_number}/{total_requests}...")
+                    self.report_progress(request_number, total_requests, f"Processing request #{request_number}/{total_requests}")
+                else:
+                    self.log(f"Processing Request #{request_number}...")
+                    self.report_progress(request_number, -1, f"Processing request #{request_number}")
 
                 # Add comment
                 try:
@@ -1543,7 +1546,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             self.log(f"Error during approval: {e}", "ERROR")
             return 0
 
-    def reject_users(self, comment="Rejected via automation"):
+    def reject_users(self, comment="Rejected via automation", total_requests=None):
         """Add comment and click Reject button - loops until all users rejected"""
         self.check_cancelled()
         self.log("Starting rejection process...")
@@ -1612,8 +1615,12 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             while True:
                 self.check_cancelled()
-                self.log(f"Processing Rejection Request #{request_number}...")
-                self.report_progress(rejected_count, -1, f"Processing rejection #{request_number}")
+                if total_requests:
+                    self.log(f"Processing Rejection Request #{request_number}/{total_requests}...")
+                    self.report_progress(request_number, total_requests, f"Processing rejection #{request_number}/{total_requests}")
+                else:
+                    self.log(f"Processing Rejection Request #{request_number}...")
+                    self.report_progress(rejected_count, -1, f"Processing rejection #{request_number}")
 
                 # Add comment
                 try:
@@ -2476,7 +2483,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     if selected > 0:
                         self.log(f"{selected} user(s) ready for approval (Batch {batch_number})", "SUCCESS")
 
-                        approved_count = self.approve_users(comment)
+                        approved_count = self.approve_users(comment, total_requests=selected)
                         if approved_count and approved_count > 0:
                             total_approved += approved_count
                             # Remove processed users from the list
@@ -2518,7 +2525,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     self.log(f"{selected} user(s) ready for approval", "SUCCESS")
                     self.report_progress(0, selected, f"0/{selected} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
-                    approved_count = self.approve_users(comment)
+                    approved_count = self.approve_users(comment, total_requests=selected)
                     if approved_count and approved_count > 0:
                         total_approved = approved_count
                         self.report_progress(approved_count, selected, f"{approved_count}/{selected} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
@@ -2551,7 +2558,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                         self.check_cancelled()
                                         sel, matched = self.select_specific_users(list(remaining))
                                         if sel > 0:
-                                            approved = self.approve_users(comment)
+                                            approved = self.approve_users(comment, total_requests=sel)
                                             if approved:
                                                 counterpart_approved += approved
                                             remaining -= matched
@@ -2569,7 +2576,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                     sel = self.select_all_pending_users()
                                     if sel > 0:
                                         self.report_progress(0, sel, f"0/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
-                                        approved = self.approve_users(comment)
+                                        approved = self.approve_users(comment, total_requests=sel)
                                         if approved:
                                             self.report_progress(approved, sel, f"{approved}/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
                             else:
@@ -2603,7 +2610,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                                 if sel > 0:
                                     self.report_progress(0, sel, f"0/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
-                                    approved = self.approve_users(comment)
+                                    approved = self.approve_users(comment, total_requests=sel)
                                     if approved and approved > 0:
                                         self.log(f"Successfully approved {approved} users in {counterpart}!", "SUCCESS")
                                         self.report_progress(1, 1, "Completed", phase=total_phases, total_phases=total_phases, phase_label="")
@@ -2717,7 +2724,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     if selected > 0:
                         self.log(f"{selected} user(s) ready for REJECTION (Batch {batch_number})", "WARNING")
 
-                        rejected_count = self.reject_users(comment)
+                        rejected_count = self.reject_users(comment, total_requests=selected)
                         if rejected_count and rejected_count > 0:
                             total_rejected += rejected_count
                             # Remove processed users from the list
@@ -2758,7 +2765,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     self.log(f"{selected} user(s) ready for REJECTION", "WARNING")
                     self.report_progress(0, selected, f"0/{selected} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
 
-                    rejected_count = self.reject_users(comment)
+                    rejected_count = self.reject_users(comment, total_requests=selected)
                     if rejected_count and rejected_count > 0:
                         total_rejected = rejected_count
                         self.report_progress(rejected_count, selected, f"{rejected_count}/{selected} users", phase=current_phase, total_phases=total_phases, phase_label=domain)
@@ -2791,7 +2798,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                         self.check_cancelled()
                                         sel, matched = self.select_specific_users(list(remaining))
                                         if sel > 0:
-                                            rejected = self.reject_users(comment)
+                                            rejected = self.reject_users(comment, total_requests=sel)
                                             if rejected:
                                                 counterpart_rejected += rejected
                                             remaining -= matched
@@ -2809,7 +2816,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                                     sel = self.select_all_pending_users()
                                     if sel > 0:
                                         self.report_progress(0, sel, f"0/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
-                                        rejected = self.reject_users(comment)
+                                        rejected = self.reject_users(comment, total_requests=sel)
                                         if rejected:
                                             self.report_progress(rejected, sel, f"{rejected}/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
 
@@ -2840,7 +2847,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                                 if sel > 0:
                                     self.report_progress(0, sel, f"0/{sel} users", phase=current_phase, total_phases=total_phases, phase_label=counterpart)
-                                    rejected = self.reject_users(comment)
+                                    rejected = self.reject_users(comment, total_requests=sel)
                                     if rejected and rejected > 0:
                                         self.log(f"Successfully REJECTED {rejected} users in {counterpart}!", "SUCCESS")
                                         self.report_progress(1, 1, "Completed", phase=total_phases, total_phases=total_phases, phase_label="")

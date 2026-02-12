@@ -167,6 +167,50 @@ class CardFrame(ctk.CTkFrame):
         )
 
 
+class ToolTip:
+    """Hover tooltip for icon buttons"""
+    def __init__(self, widget, text, delay=400):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tooltip_window = None
+        self._after_id = None
+        widget.bind('<Enter>', self._schedule)
+        widget.bind('<Leave>', self._hide)
+        widget.bind('<Button-1>', self._hide)
+
+    def _schedule(self, event=None):
+        self._cancel()
+        self._after_id = self.widget.after(self.delay, self._show)
+
+    def _show(self):
+        if self.tooltip_window:
+            return
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self.tooltip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tw.wm_attributes("-topmost", True)
+        label = tk.Label(tw, text=self.text, bg="#2d2d2d", fg="#f0f0f0",
+                        font=("SF Pro Text", 11), padx=8, pady=4)
+        label.pack()
+
+    def _hide(self, event=None):
+        self._cancel()
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
+    def _cancel(self):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def update_text(self, text):
+        self.text = text
+
+
 class ResizablePanedWindow(tk.PanedWindow):
     """
     A styled PanedWindow that matches CustomTkinter appearance.
@@ -678,10 +722,10 @@ class GovCAApp(ctk.CTk):
 
         self.settings_btn = ctk.CTkButton(
             right_frame,
-            text="Settings",
-            width=80,
-            height=32,
-            font=Typography.body_md(),
+            text="\u2699",
+            width=32,
+            height=28,
+            font=ctk.CTkFont(size=16),
             fg_color="transparent",
             hover_color=ColorPalette.get('border'),
             border_width=1,
@@ -691,6 +735,7 @@ class GovCAApp(ctk.CTk):
             command=self._open_settings
         )
         self.settings_btn.pack()
+        ToolTip(self.settings_btn, "Settings")
 
     def _create_workflow_section(self, parent):
         """Create workflow selection section with card-style buttons"""
@@ -979,10 +1024,10 @@ class GovCAApp(ctk.CTk):
         # Clear button for usernames
         self.clear_usernames_btn = ctk.CTkButton(
             self.usernames_frame,
-            text="Clear",
-            width=60,
-            height=32,
-            font=Typography.body_sm(),
+            text="\u2715",
+            width=28,
+            height=28,
+            font=ctk.CTkFont(size=14),
             fg_color="transparent",
             hover_color=ColorPalette.get('border'),
             border_width=1,
@@ -992,6 +1037,7 @@ class GovCAApp(ctk.CTk):
             command=self._clear_usernames
         )
         self.clear_usernames_btn.pack(side="left", padx=(10, 0), anchor="n")
+        ToolTip(self.clear_usernames_btn, "Clear usernames")
 
         # Username hint
         ctk.CTkLabel(
@@ -1193,10 +1239,10 @@ class GovCAApp(ctk.CTk):
         # Toggle button
         self.toggle_logs_btn = ctk.CTkButton(
             header_right,
-            text="Show Logs",
-            width=100,
-            height=32,
-            font=Typography.body_sm(),
+            text="\u2261",
+            width=28,
+            height=28,
+            font=ctk.CTkFont(size=16),
             fg_color=ColorPalette.get('bg_secondary'),
             hover_color=ColorPalette.get('border'),
             border_width=1,
@@ -1206,14 +1252,15 @@ class GovCAApp(ctk.CTk):
             command=self._toggle_logs
         )
         self.toggle_logs_btn.pack(side="right", padx=(8, 0))
+        self.toggle_logs_tooltip = ToolTip(self.toggle_logs_btn, "Show Logs")
 
         # Copy button
         self.copy_logs_btn = ctk.CTkButton(
             header_right,
-            text="Copy",
-            width=70,
-            height=32,
-            font=Typography.body_sm(),
+            text="\u2398",
+            width=28,
+            height=28,
+            font=ctk.CTkFont(size=14),
             fg_color="transparent",
             hover_color=ColorPalette.get('border'),
             border_width=1,
@@ -1223,6 +1270,7 @@ class GovCAApp(ctk.CTk):
             command=self._copy_logs_to_clipboard
         )
         self.copy_logs_btn.pack(side="right", padx=(8, 0))
+        self.copy_logs_tooltip = ToolTip(self.copy_logs_btn, "Copy to clipboard")
 
         # Auto-scroll switch
         self.autoscroll_var = ctk.BooleanVar(value=True)
@@ -1263,7 +1311,6 @@ class GovCAApp(ctk.CTk):
         self.log_text.pack_forget()
         self.autoscroll_switch.pack_forget()
         self.copy_logs_btn.pack_forget()
-        self.toggle_logs_btn.configure(text="Show Logs")
 
         # GIF label
         self.gif_label = tk.Label(
@@ -1299,7 +1346,7 @@ class GovCAApp(ctk.CTk):
             self.log_text.pack_forget()
             self.autoscroll_switch.pack_forget()
             self.copy_logs_btn.pack_forget()
-            self.toggle_logs_btn.configure(text="Show Logs")
+            self.toggle_logs_tooltip.update_text("Show Logs")
 
             if self.is_running:
                 self.animation_frame.pack(fill="both", expand=True)
@@ -1315,7 +1362,7 @@ class GovCAApp(ctk.CTk):
             self.autoscroll_switch.pack(side="right")
             self.copy_logs_btn.pack(side="right", padx=(8, 0))
             self.log_text.pack(fill="both", expand=True)
-            self.toggle_logs_btn.configure(text="Hide Logs")
+            self.toggle_logs_tooltip.update_text("Hide Logs")
             self.logs_visible = True
 
     def _load_gif_frames(self):
@@ -1515,7 +1562,7 @@ class GovCAApp(ctk.CTk):
             buttons_frame,
             text="START",
             width=150,
-            height=38,
+            height=34,
             font=Typography.heading_sm(),
             fg_color=ColorPalette.get('accent_success'),
             hover_color="#059669" if ctk.get_appearance_mode() == "Light" else "#34d399",
@@ -1529,7 +1576,7 @@ class GovCAApp(ctk.CTk):
             buttons_frame,
             text="STOP",
             width=150,
-            height=38,
+            height=34,
             font=Typography.heading_sm(),
             fg_color=ColorPalette.get('accent_error'),
             hover_color="#dc2626" if ctk.get_appearance_mode() == "Light" else "#f87171",
@@ -1539,22 +1586,23 @@ class GovCAApp(ctk.CTk):
         )
         self.stop_button.pack(side="left", padx=(0, 10))
 
-        # Clear log button (ghost style)
+        # Clear log button (icon style)
         clear_button = ctk.CTkButton(
             buttons_frame,
-            text="Clear Log",
-            width=110,
-            height=38,
-            font=Typography.body_md(),
+            text="\u2715",
+            width=32,
+            height=32,
+            font=ctk.CTkFont(size=14),
             fg_color="transparent",
             hover_color=ColorPalette.get('border'),
-            border_width=2,
+            border_width=1,
             border_color=ColorPalette.get('border'),
             text_color=ColorPalette.get('text_secondary'),
             corner_radius=10,
             command=self._clear_log
         )
         clear_button.pack(side="right", padx=(10, 0))
+        ToolTip(clear_button, "Clear log")
 
     def _create_status_bar(self):
         """Create status bar at bottom of window"""
@@ -1600,10 +1648,10 @@ class GovCAApp(ctk.CTk):
         # Close Browser button
         self.close_browser_btn = ctk.CTkButton(
             status_bar,
-            text="Close Browser",
-            width=100,
-            height=24,
-            font=Typography.body_sm(),
+            text="\u2715",
+            width=22,
+            height=22,
+            font=ctk.CTkFont(size=12),
             fg_color="transparent",
             hover_color=ColorPalette.get('border'),
             border_width=1,
@@ -1614,6 +1662,7 @@ class GovCAApp(ctk.CTk):
             state="disabled"
         )
         self.close_browser_btn.pack(side="left", padx=(15, 0), pady=4)
+        ToolTip(self.close_browser_btn, "Close browser")
 
         # Sleep prevention indicator
         self.sleep_label = ctk.CTkLabel(
@@ -1725,10 +1774,9 @@ class GovCAApp(ctk.CTk):
         if log_content:
             self.clipboard_clear()
             self.clipboard_append(log_content)
-            # Brief visual feedback
-            original_text = self.copy_logs_btn.cget("text")
-            self.copy_logs_btn.configure(text="Copied!")
-            self.after(1500, lambda: self.copy_logs_btn.configure(text=original_text))
+            # Brief visual feedback with checkmark
+            self.copy_logs_btn.configure(text="\u2713")
+            self.after(1500, lambda: self.copy_logs_btn.configure(text="\u2398"))
 
     def _clear_usernames(self):
         """Clear the usernames input"""
