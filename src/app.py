@@ -676,6 +676,7 @@ class GovCAApp(ctk.CTk):
         self.animation_running = False
         self.animation_frame_index = 0
         self.animation_after_id = None
+        self._sash_anim_id = None
         self.gif_frames = []  # GIF animation frames
         self.gif_target_size = (300, 188)
 
@@ -1732,6 +1733,43 @@ class GovCAApp(ctk.CTk):
         # Hide live indicator
         self.live_indicator.configure(text="")
 
+    def _animate_sash(self, target_y, duration=300):
+        """Animate PanedWindow sash to target_y with ease-out over duration ms."""
+        try:
+            start_y = self.main_paned.sash_coord(0)[1]
+        except Exception:
+            return
+        if abs(start_y - target_y) < 2:
+            return
+        # Cancel any in-flight sash animation
+        if self._sash_anim_id:
+            self.after_cancel(self._sash_anim_id)
+            self._sash_anim_id = None
+        steps = max(1, duration // 16)  # ~60fps
+        self._sash_anim_step = 0
+        self._sash_anim_steps = steps
+        self._sash_anim_start = start_y
+        self._sash_anim_target = target_y
+
+        self._sash_anim_tick()
+
+    def _sash_anim_tick(self):
+        """Single frame of sash animation with ease-out."""
+        self._sash_anim_step += 1
+        t = self._sash_anim_step / self._sash_anim_steps
+        # Ease-out quad: decelerating
+        t = 1 - (1 - t) ** 2
+        y = int(self._sash_anim_start + (self._sash_anim_target - self._sash_anim_start) * t)
+        try:
+            self.main_paned.sash_place(0, 0, y)
+            self.main_paned._update_grip_position()
+        except Exception:
+            return
+        if self._sash_anim_step < self._sash_anim_steps:
+            self._sash_anim_id = self.after(16, self._sash_anim_tick)
+        else:
+            self._sash_anim_id = None
+
     def _animate_gif(self):
         """Cycle through GIF animation frames"""
         if not self.animation_running or not self.gif_frames:
@@ -2386,6 +2424,10 @@ class GovCAApp(ctk.CTk):
                     self._stop_animation()
                     self._show_result(success=not has_errors)
 
+                # Auto-expand config pane so user can configure next run
+                if was_running:
+                    self._animate_sash(180)
+
                 # Notify user (system notification + dock bounce / taskbar flash)
                 if was_running:
                     self._notify_user(success=not has_errors, processed_count=current)
@@ -2489,6 +2531,9 @@ class GovCAApp(ctk.CTk):
         if self.log_view_mode != "logs":
             self._set_log_view(self.log_view_mode)  # Re-apply layout to ensure animation is packed
             self._start_animation()
+
+        # Auto-collapse config pane to give more room to animation/logs
+        self._animate_sash(80)
 
         # Reuse existing bot or create new one
         # Get auth method from saved settings
@@ -2617,6 +2662,8 @@ class GovCAApp(ctk.CTk):
             if self.log_view_mode != "logs":
                 self._stop_animation()
                 self._show_result(success=False)
+            # Auto-expand config pane so user can configure next run
+            self._animate_sash(180)
             self._notify_user(success=False)
             self._update_session_status()
 
