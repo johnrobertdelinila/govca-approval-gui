@@ -659,7 +659,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         self.log(f"Selecting domain: {domain_name}")
 
         try:
-            domain_dropdown = self.wait.until(
+            domain_dropdown = self.cancellable_wait(30,
                 EC.presence_of_element_located((By.ID, "selSwitchDomain"))
             )
 
@@ -1199,7 +1199,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             # Scroll the button into view
             self.driver.execute_script("arguments[0].scrollIntoView(true);", next_btn)
-            time.sleep(0.5)
+            self.interruptible_sleep(0.5)
 
             # Try clicking up to 3 times, verifying page actually changed
             for attempt in range(3):
@@ -1277,7 +1277,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
             self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
-            time.sleep(0.5)
+            self.interruptible_sleep(0.5)
 
             url_before_batch = self.driver.current_url
             batch_respond_button.click()
@@ -1343,13 +1343,13 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     comment_field = self.cancellable_wait(15,
                         EC.presence_of_element_located((By.ID, "txtComment"))
                     )
-                    WebDriverWait(self.driver, 5).until(
+                    self.cancellable_wait(5,
                         EC.element_to_be_clickable((By.ID, "txtComment"))
                     )
 
                     if not comment_field.get_attribute('value') or request_number == 1:
                         comment_field.clear()
-                        time.sleep(0.2)
+                        self.interruptible_sleep(0.2)
                         comment_field.send_keys(comment)
                         self.log(f"Comment added: '{comment}'", "SUCCESS")
                     else:
@@ -1365,7 +1365,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         EC.element_to_be_clickable((By.ID, "btnApprove"))
                     )
                     self.driver.execute_script("arguments[0].scrollIntoView(true);", approve_button)
-                    time.sleep(0.5)
+                    self.interruptible_sleep(0.5)
 
                     url_before_approve = self.driver.current_url
                     approve_button.click()
@@ -1374,7 +1374,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                     # Handle alert
                     try:
-                        WebDriverWait(self.driver, 2).until(EC.alert_is_present())
+                        self.cancellable_wait(2, EC.alert_is_present())
                         alert = self.driver.switch_to.alert
                         self.log(f"Alert: {alert.text}", "WARNING")
                         alert.accept()
@@ -1468,7 +1468,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if next_request_found and next_request_button:
                     self.log("Found Next Request button - clicking...")
                     self.driver.execute_script("arguments[0].scrollIntoView(true);", next_request_button)
-                    time.sleep(0.3)
+                    self.interruptible_sleep(0.3)
                     next_request_button.click()
                     self.log("Clicked Next Request button", "SUCCESS")
 
@@ -1555,7 +1555,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
             self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
-            time.sleep(0.5)
+            self.interruptible_sleep(0.5)
 
             url_before_batch = self.driver.current_url
             batch_respond_button.click()
@@ -1620,13 +1620,13 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     comment_field = self.cancellable_wait(15,
                         EC.presence_of_element_located((By.ID, "txtComment"))
                     )
-                    WebDriverWait(self.driver, 5).until(
+                    self.cancellable_wait(5,
                         EC.element_to_be_clickable((By.ID, "txtComment"))
                     )
 
                     if not comment_field.get_attribute('value') or request_number == 1:
                         comment_field.clear()
-                        time.sleep(0.2)
+                        self.interruptible_sleep(0.2)
                         comment_field.send_keys(comment)
                         self.log(f"Comment added: '{comment}'", "SUCCESS")
                     else:
@@ -1642,7 +1642,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         EC.element_to_be_clickable((By.ID, "btnReject"))
                     )
                     self.driver.execute_script("arguments[0].scrollIntoView(true);", reject_button)
-                    time.sleep(0.5)
+                    self.interruptible_sleep(0.5)
 
                     url_before_reject = self.driver.current_url
                     reject_button.click()
@@ -1651,7 +1651,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
                     # Handle alert
                     try:
-                        WebDriverWait(self.driver, 2).until(EC.alert_is_present())
+                        self.cancellable_wait(2, EC.alert_is_present())
                         alert = self.driver.switch_to.alert
                         self.log(f"Alert: {alert.text}", "WARNING")
                         alert.accept()
@@ -1748,7 +1748,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 if next_request_found and next_request_button:
                     self.log("Found Next Request button - clicking...")
                     self.driver.execute_script("arguments[0].scrollIntoView(true);", next_request_button)
-                    time.sleep(0.3)
+                    self.interruptible_sleep(0.3)
                     next_request_button.click()
                     self.log("Clicked Next Request button", "SUCCESS")
 
@@ -2998,7 +2998,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
             respond_button = respond_buttons[0]
             self.driver.execute_script("arguments[0].scrollIntoView(true);", respond_button)
-            time.sleep(0.5)
+            self.interruptible_sleep(0.5)
             respond_button.click()
             self.log("Clicked Respond button", "SUCCESS")
 

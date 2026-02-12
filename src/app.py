@@ -629,7 +629,7 @@ class GovCAApp(ctk.CTk):
     def _create_title_section(self, parent):
         """Create title section with domain indicator and settings button"""
         title_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        title_frame.pack(fill="x", pady=(0, 15))
+        title_frame.pack(fill="x", pady=(0, 10))
 
         # LEFT: Domain indicator
         left_frame = ctk.CTkFrame(title_frame, fg_color="transparent")
@@ -695,7 +695,7 @@ class GovCAApp(ctk.CTk):
     def _create_workflow_section(self, parent):
         """Create workflow selection section with card-style buttons"""
         section_frame = CardFrame(parent)
-        section_frame.pack(fill="x", pady=(0, 10))
+        section_frame.pack(fill="x", pady=(0, 6))
 
         # Header
         header = ctk.CTkLabel(
@@ -704,11 +704,11 @@ class GovCAApp(ctk.CTk):
             font=Typography.section_header(),
             text_color=ColorPalette.get('text_muted')
         )
-        header.pack(anchor="w", padx=15, pady=(8, 4))
+        header.pack(anchor="w", padx=15, pady=(4, 2))
 
         # Workflow buttons container
         buttons_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
-        buttons_frame.pack(fill="x", padx=15, pady=(0, 8))
+        buttons_frame.pack(fill="x", padx=15, pady=(0, 4))
         buttons_frame.grid_columnconfigure((0, 1, 2), weight=1, uniform="workflow")
 
         workflows = [
@@ -729,11 +729,11 @@ class GovCAApp(ctk.CTk):
                 border_width=2,
                 border_color=ColorPalette.get('accent_primary') if value == "1" else ColorPalette.get('border')
             )
-            btn_container.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")
+            btn_container.grid(row=0, column=i, padx=4, pady=3, sticky="nsew")
 
             # Inner content
             inner = ctk.CTkFrame(btn_container, fg_color="transparent")
-            inner.pack(expand=True, fill="both", padx=8, pady=8)
+            inner.pack(expand=True, fill="both", padx=6, pady=5)
 
             # Title
             title_lbl = ctk.CTkLabel(
@@ -751,7 +751,7 @@ class GovCAApp(ctk.CTk):
                 font=Typography.body_sm(),
                 text_color="#e5e7eb" if value == "1" else ColorPalette.get('text_secondary')
             )
-            subtitle_lbl.pack(pady=(2, 0))
+            subtitle_lbl.pack(pady=(1, 0))
 
             # Make entire frame clickable
             for widget in [btn_container, inner, title_lbl, subtitle_lbl]:
@@ -807,11 +807,11 @@ class GovCAApp(ctk.CTk):
         """Create configuration section with OPTIONS only (settings moved to dialog)"""
         # Config container (scrollable)
         config_container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        config_container.pack(fill="both", expand=True, padx=10, pady=(8, 8))
+        config_container.pack(fill="both", expand=True, padx=10, pady=(6, 6))
 
         # ============ OPTIONS SECTION ============
         options_frame = ctk.CTkFrame(config_container, fg_color=ColorPalette.get('bg_secondary'), corner_radius=8)
-        options_frame.pack(fill="x", pady=(0, 8))
+        options_frame.pack(fill="x", pady=(0, 6))
 
         # Options header
         ctk.CTkLabel(
@@ -819,11 +819,11 @@ class GovCAApp(ctk.CTk):
             text="OPTIONS",
             font=Typography.section_header(),
             text_color=ColorPalette.get('text_muted')
-        ).pack(anchor="w", padx=12, pady=(8, 6))
+        ).pack(anchor="w", padx=12, pady=(6, 4))
 
         # Options content
         options_content = ctk.CTkFrame(options_frame, fg_color="transparent")
-        options_content.pack(fill="x", padx=12, pady=(0, 10))
+        options_content.pack(fill="x", padx=12, pady=(0, 6))
 
         # Row 1: Counterpart checkbox + All Domains toggle
         options_row1 = ctk.CTkFrame(options_content, fg_color="transparent")
@@ -874,11 +874,11 @@ class GovCAApp(ctk.CTk):
             text="WORKFLOW OPTIONS",
             font=Typography.section_header(),
             text_color=ColorPalette.get('text_muted')
-        ).pack(anchor="w", padx=12, pady=(8, 6))
+        ).pack(anchor="w", padx=12, pady=(6, 4))
 
         # Workflow options content
         workflow_content = ctk.CTkFrame(self.workflow_options_frame, fg_color="transparent")
-        workflow_content.pack(fill="x", padx=12, pady=(0, 10))
+        workflow_content.pack(fill="x", padx=12, pady=(0, 6))
 
         # Comment row
         self.comment_row = ctk.CTkFrame(workflow_content, fg_color="transparent")
@@ -1165,7 +1165,7 @@ class GovCAApp(ctk.CTk):
         """Create log output section with animation"""
         # Header with toggle button
         header_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        header_frame.pack(fill="x", padx=15, pady=(12, 8))
+        header_frame.pack(fill="x", padx=15, pady=(8, 6))
 
         # Header left
         header_left = ctk.CTkFrame(header_frame, fg_color="transparent")
@@ -1475,7 +1475,7 @@ class GovCAApp(ctk.CTk):
     def _create_progress_section(self, parent):
         """Create progress section with animated progress bar and phase indicator"""
         progress_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        progress_frame.pack(fill="x", side="top", pady=(0, 10))
+        progress_frame.pack(fill="x", side="top", pady=(0, 6))
 
         # Phase indicator label (shown when processing multiple domains)
         self.phase_label = ctk.CTkLabel(
@@ -1515,7 +1515,7 @@ class GovCAApp(ctk.CTk):
             buttons_frame,
             text="START",
             width=150,
-            height=44,
+            height=38,
             font=Typography.heading_sm(),
             fg_color=ColorPalette.get('accent_success'),
             hover_color="#059669" if ctk.get_appearance_mode() == "Light" else "#34d399",
@@ -1529,7 +1529,7 @@ class GovCAApp(ctk.CTk):
             buttons_frame,
             text="STOP",
             width=150,
-            height=44,
+            height=38,
             font=Typography.heading_sm(),
             fg_color=ColorPalette.get('accent_error'),
             hover_color="#dc2626" if ctk.get_appearance_mode() == "Light" else "#f87171",
@@ -1544,7 +1544,7 @@ class GovCAApp(ctk.CTk):
             buttons_frame,
             text="Clear Log",
             width=110,
-            height=44,
+            height=38,
             font=Typography.body_md(),
             fg_color="transparent",
             hover_color=ColorPalette.get('border'),
@@ -1777,73 +1777,86 @@ class GovCAApp(ctk.CTk):
 
     def _poll_updates(self):
         """Poll for log and progress updates from automation thread"""
-        # Poll log messages
-        new_messages = self.log_buffer.poll()
-        for msg in new_messages:
-            self._log(msg.message, msg.level)
+        try:
+            # Poll log messages
+            new_messages = self.log_buffer.poll()
+            for msg in new_messages:
+                self._log(msg.message, msg.level)
 
-        # Poll progress (now returns dict)
-        data = self.progress_tracker.poll()
-        if data['changed']:
+            # Poll progress (now returns dict)
+            data = self.progress_tracker.poll()
             current = data['current']
             total = data['total']
-            message = data['message']
-            phase = data['phase']
-            total_phases = data['total_phases']
-            phase_label = data['phase_label']
+            if data['changed']:
+                message = data['message']
+                phase = data['phase']
+                total_phases = data['total_phases']
+                phase_label = data['phase_label']
 
-            # Update phase indicator
-            if total_phases > 1 and phase_label:
-                self.phase_label.configure(text=f"Phase {phase}/{total_phases}: {phase_label}")
-                self.phase_label.pack(anchor="w", pady=(0, 4))
-            elif phase_label:
-                self.phase_label.configure(text=phase_label)
-                self.phase_label.pack(anchor="w", pady=(0, 4))
-            else:
-                self.phase_label.pack_forget()
+                # Update phase indicator
+                if total_phases > 1 and phase_label:
+                    self.phase_label.configure(text=f"Phase {phase}/{total_phases}: {phase_label}")
+                    self.phase_label.pack(anchor="w", pady=(0, 4))
+                elif phase_label:
+                    self.phase_label.configure(text=phase_label)
+                    self.phase_label.pack(anchor="w", pady=(0, 4))
+                else:
+                    self.phase_label.pack_forget()
 
-            # Update progress bar
-            if total > 0:
-                progress = current / total
-                self.progress_bar.set_animated(progress)
-                self.status_label.configure(text=f"{message} ({current}/{total})")
-            elif total < 0:
-                # Indeterminate
-                self.progress_bar.set_animated(0.5)
-                self.status_label.configure(text=message if message else "Processing...")
-            else:
-                self.progress_bar.set_animated(0)
-                self.status_label.configure(text=message if message else "Ready")
+                # Update progress bar
+                if total > 0:
+                    progress = current / total
+                    self.progress_bar.set_animated(progress)
+                    self.status_label.configure(text=f"{message} ({current}/{total})")
+                elif total < 0:
+                    # Indeterminate
+                    self.progress_bar.set_animated(0.5)
+                    self.status_label.configure(text=message if message else "Processing...")
+                else:
+                    self.progress_bar.set_animated(0)
+                    self.status_label.configure(text=message if message else "Ready")
 
-        # Check if thread finished
-        if self.automation_thread and not self.automation_thread.is_alive():
-            self._cancel_escalation_timers()
-            was_running = self.is_running
-            self.is_running = False
-            self.automation_thread = None
-            self._update_button_states()
-            self.progress_bar.set_animated(1 if current > 0 else 0)
+            # Check if thread finished
+            if self.automation_thread and not self.automation_thread.is_alive():
+                self._cancel_escalation_timers()
+                was_running = self.is_running
+                self.is_running = False
+                self.automation_thread = None
+                self._update_button_states()
+                self.progress_bar.set_animated(1 if current > 0 else 0)
 
-            # Stop animation and show result
-            if was_running and not self.logs_visible:
-                self._stop_animation()
-                # Check if there were errors in the log
-                has_errors = "ERROR" in self.log_text.get("1.0", "end")
-                self._show_result(success=not has_errors)
+                # Stop animation and show result
+                if was_running and not self.logs_visible:
+                    self._stop_animation()
+                    # Check if there were errors in the log
+                    has_errors = "ERROR" in self.log_text.get("1.0", "end")
+                    self._show_result(success=not has_errors)
 
-            # Update session status after workflow completes
-            self._update_session_status()
-
-        # Periodic session status check (every 5 seconds = 50 polls at 100ms)
-        if not hasattr(self, '_session_check_counter'):
-            self._session_check_counter = 0
-        self._session_check_counter += 1
-        if self._session_check_counter >= 50:
-            self._session_check_counter = 0
-            if not self.is_running:  # Only check when not running
+                # Update session status after workflow completes
                 self._update_session_status()
 
-        # Schedule next poll
+                # Reset status if thread died before any progress (e.g., Firefox failed to start)
+                if current == 0:
+                    self.status_label.configure(text="Ready")
+                    self.phase_label.pack_forget()
+
+            # Periodic session status check (every 5 seconds = 50 polls at 100ms)
+            if not hasattr(self, '_session_check_counter'):
+                self._session_check_counter = 0
+            self._session_check_counter += 1
+            if self._session_check_counter >= 50:
+                self._session_check_counter = 0
+                if not self.is_running:  # Only check when not running
+                    self._update_session_status()
+
+        except Exception as e:
+            # Log error but never let polling die
+            try:
+                self._log(f"Polling error: {e}", "ERROR")
+            except:
+                pass
+
+        # ALWAYS reschedule — outside try/except so polling never dies
         self.after(100, self._poll_updates)
 
     def _update_button_states(self):
@@ -1997,6 +2010,8 @@ class GovCAApp(ctk.CTk):
         self.cancel_event.set()
         self.status_label.configure(text="Stopping...")
 
+        # Cancel any existing escalation timers before scheduling new ones
+        self._cancel_escalation_timers()
         # Schedule escalation: force-quit browser after 5s if thread still alive
         self._escalate_timer_id = self.after(5000, self._escalate_stop)
 
@@ -2013,6 +2028,10 @@ class GovCAApp(ctk.CTk):
                 self.bot.driver = None
             # Schedule final cleanup after another 5s
             self._finalize_timer_id = self.after(5000, self._finalize_stop)
+        elif self.is_running:
+            # Thread already dead but UI wasn't cleaned up (polling may have failed)
+            self._log("Thread already stopped, cleaning up...", "WARNING")
+            self._finalize_stop()
 
     def _finalize_stop(self):
         """Final cleanup: force-reset UI state regardless of thread status."""
