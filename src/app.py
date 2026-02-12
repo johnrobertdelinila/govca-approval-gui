@@ -410,32 +410,40 @@ class SettingsDialog(ctk.CTkToplevel):
 
     def __init__(self, parent, current_domain, current_auth, on_save):
         super().__init__(parent)
+
+        # Hide window while building to prevent flash/jerk
+        self.withdraw()
+
         self.title("Settings")
-        self.geometry("400x420")
         self.resizable(False, False)
 
         # Make modal
         self.transient(parent)
-        self.grab_set()
 
         # Store callback
         self.on_save = on_save
         self.custom_gif_path = get_custom_gif() or ""
 
-        # Center on parent
+        # Build UI first (before showing)
+        self._create_widgets(current_domain, current_auth)
+
+        # Center on parent after widgets are built
         self.update_idletasks()
+        dialog_width = 400
+        dialog_height = 420
         parent_x = parent.winfo_x()
         parent_y = parent.winfo_y()
         parent_width = parent.winfo_width()
         parent_height = parent.winfo_height()
-        dialog_width = 400
-        dialog_height = 420
         x = parent_x + (parent_width - dialog_width) // 2
         y = parent_y + (parent_height - dialog_height) // 2
         self.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
 
-        # Build UI
-        self._create_widgets(current_domain, current_auth)
+        # Fade in smoothly
+        self.attributes('-alpha', 0.0)
+        self.deiconify()
+        self.grab_set()
+        self._fade_in(0.0)
 
     def _create_widgets(self, current_domain, current_auth):
         """Create dialog widgets"""
@@ -581,6 +589,13 @@ class SettingsDialog(ctk.CTkToplevel):
         """Reset to default animation"""
         self.custom_gif_path = ""
         self.gif_label.configure(text="Default animation")
+
+    def _fade_in(self, alpha):
+        """Smoothly fade in the dialog"""
+        alpha = min(alpha + 0.1, 1.0)
+        self.attributes('-alpha', alpha)
+        if alpha < 1.0:
+            self.after(15, self._fade_in, alpha)
 
     def _save_and_close(self):
         """Save settings and close dialog"""
