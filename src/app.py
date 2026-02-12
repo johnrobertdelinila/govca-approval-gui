@@ -1524,17 +1524,46 @@ class GovCAApp(ctk.CTk):
             bd=0,
             highlightthickness=0
         )
-        self.gif_label.pack(expand=True, pady=(30, 15))
+        self.gif_label.pack(expand=True, pady=(8, 4))
 
-        # Fun messages that cycle
-        self.fun_messages = [
-            "Approving users like a boss...",
-            "Making GovCA magic happen...",
-            "Almost there, hang tight!",
-            "Processing at robot speed...",
-            "Beep boop, working hard!",
-            "Certificate automation in progress...",
-        ]
+        # Workflow-aware message pools
+        self._workflow_messages = {
+            "shared": [
+                "Doing the thing...",
+                "Hold my coffee...",
+                "Trust the process.",
+                "You could grab a snack.",
+                "Working faster than you think.",
+                "This is the fun part, right?",
+                "Patience is a virtue, they say.",
+                "Still at it. No complaints.",
+                "Just vibes and automation.",
+                "Let the bot cook.",
+            ],
+            "1": [  # Add User — Batch Approve
+                "Onboarding humans at scale.",
+                "Stamping approvals like a boss.",
+                "New users incoming!",
+                "Approve, approve, approve...",
+                "Making accounts happen.",
+                "Rolling out the welcome mat.",
+                "Batch mode: engaged.",
+            ],
+            "2": [  # Revoke Cert
+                "Revoking with care.",
+                "Cleaning up certificates...",
+                "One cert at a time.",
+                "Saying goodbye to old certs.",
+                "Revocation station.",
+            ],
+            "3": [  # Assign Group
+                "Sorting users into groups.",
+                "Group therapy in progress.",
+                "Organizing the roster.",
+                "Assigning seats at the table.",
+                "Building the dream team.",
+            ],
+        }
 
         self.message_label = ctk.CTkLabel(
             self.animation_frame,
@@ -1542,7 +1571,7 @@ class GovCAApp(ctk.CTk):
             font=Typography.body_lg(),
             text_color=ColorPalette.get('text_muted')
         )
-        self.message_label.pack(pady=(15, 30))
+        self.message_label.pack(pady=(4, 12))
 
     def _toggle_logs(self):
         """Cycle log view: animation -> split -> logs -> animation"""
@@ -1675,7 +1704,7 @@ class GovCAApp(ctk.CTk):
         # Make sure GIF label is visible
         if hasattr(self, 'gif_placeholder_label'):
             self.gif_placeholder_label.pack_forget()
-        self.gif_label.pack(expand=True, pady=(30, 15))
+        self.gif_label.pack(expand=True, pady=(8, 4))
 
         # Update live indicator
         self.live_indicator.configure(text="", text_color=ColorPalette.get('accent_success'))
@@ -1710,7 +1739,9 @@ class GovCAApp(ctk.CTk):
         # Update fun message every 10 frames
         if self.animation_frame_index % 10 == 0:
             import random
-            self.message_label.configure(text=random.choice(self.fun_messages))
+            wf = self.selected_workflow.get()
+            pool = self._workflow_messages["shared"] + self._workflow_messages.get(wf, [])
+            self.message_label.configure(text=random.choice(pool))
 
         # Next frame
         self.animation_frame_index = (self.animation_frame_index + 1) % len(self.gif_frames)
