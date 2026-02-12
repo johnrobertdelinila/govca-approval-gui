@@ -1385,7 +1385,12 @@ class GovCAApp(ctk.CTk):
         set_auth_method(auth_method)
         self._update_domain_indicator()
         # Reload GIF in case custom animation changed
+        was_running = self.animation_running
+        if was_running:
+            self._stop_animation()
         self._load_gif_frames()
+        if was_running:
+            self._start_animation()
 
     def _update_domain_indicator(self):
         """Update domain indicator label"""
