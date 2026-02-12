@@ -1430,7 +1430,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 except:
                     pass
 
-                for poll_attempt in range(15):
+                auto_loaded = False
+                for poll_attempt in range(25):
                     self.check_cancelled()
                     try:
                         candidates = []
@@ -1462,10 +1463,24 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         if next_request_found:
                             break
 
-                        if poll_attempt < 14:
+                        # Also check for auto-loaded next request during polling
+                        if poll_attempt >= 3:
+                            try:
+                                approve_btn = self.driver.find_element(By.ID, "btnApprove")
+                                comment_fields = self.driver.find_elements(By.ID, "txtComment")
+                                if comment_fields and approve_btn.is_displayed() and approve_btn.is_enabled():
+                                    fresh_url = self.driver.current_url
+                                    if "infoMsg" not in fresh_url:
+                                        self.log("Next request auto-loaded - continuing...", "SUCCESS")
+                                        auto_loaded = True
+                                        break
+                            except:
+                                pass
+
+                        if poll_attempt < 24:
                             self.interruptible_sleep(2)  # Wait between polls
                     except:
-                        if poll_attempt < 14:
+                        if poll_attempt < 24:
                             self.interruptible_sleep(2)
 
                 if next_request_found and next_request_button:
@@ -1489,49 +1504,88 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     request_number += 1
                     continue
 
-                # Check if Approve button still exists (auto-loaded next request)
-                try:
-                    approve_btn = self.driver.find_element(By.ID, "btnApprove")
-                    comment_field = self.driver.find_elements(By.ID, "txtComment")
-                    if comment_field and approve_btn.is_displayed() and approve_btn.is_enabled():
+                if auto_loaded:
+                    request_number += 1
+                    continue
+
+                # Check for definitive exit conditions with retries
+                should_continue = False
+                should_break = False
+                for stabilize_attempt in range(3):
+                    try:
+                        cancel_exists = len(self.driver.find_elements(By.XPATH, "//input[@value='Cancel']")) > 0
+                        approve_exists = len(self.driver.find_elements(By.ID, "btnApprove")) > 0
+                        comment_exists = len(self.driver.find_elements(By.ID, "txtComment")) > 0
                         fresh_url = self.driver.current_url
-                        if "infoMsg" not in fresh_url:
-                            self.log("Next request loaded automatically - continuing...", "SUCCESS")
-                            request_number += 1
-                            continue
-                except:
-                    pass
+                        has_info_msg = "infoMsg" in fresh_url
 
-                # Check for definitive exit conditions
-                try:
-                    cancel_exists = len(self.driver.find_elements(By.XPATH, "//input[@value='Cancel']")) > 0
-                    approve_exists = len(self.driver.find_elements(By.ID, "btnApprove")) > 0
+                        if cancel_exists and not approve_exists:
+                            self.log("Found Cancel button only - all requests processed", "SUCCESS")
+                            should_break = True
+                            break
 
-                    if cancel_exists and not approve_exists:
-                        self.log("Found Cancel button only - all requests processed", "SUCCESS")
-                        break
+                        if not cancel_exists and not approve_exists:
+                            self.log("All requests processed", "SUCCESS")
+                            should_break = True
+                            break
 
-                    if not cancel_exists and not approve_exists:
-                        self.log("All requests processed", "SUCCESS")
-                        break
+                        if has_info_msg:
+                            self.log("Success page detected (infoMsg in URL) - batch complete", "SUCCESS")
+                            should_break = True
+                            break
 
-                    # Approve button exists — page may still be loading. Wait and retry.
-                    if approve_exists:
-                        self.log("Approve button detected, waiting for page to stabilize...", "WARNING")
-                        self.interruptible_sleep(5)
-                        try:
-                            approve_btn = self.driver.find_element(By.ID, "btnApprove")
-                            comment_field = self.driver.find_elements(By.ID, "txtComment")
-                            if comment_field and approve_btn.is_displayed() and approve_btn.is_enabled():
-                                fresh_url = self.driver.current_url
-                                if "infoMsg" not in fresh_url:
-                                    self.log("Next request loaded after extended wait - continuing...", "SUCCESS")
-                                    request_number += 1
-                                    continue
-                        except:
-                            pass
-                except:
-                    pass
+                        # Approve button exists — page may still be loading
+                        if approve_exists:
+                            self.log(f"Stabilize check {stabilize_attempt + 1}/3: approve={approve_exists}, comment={comment_exists}, infoMsg={has_info_msg}", "WARNING")
+
+                            if comment_exists:
+                                try:
+                                    approve_btn = self.driver.find_element(By.ID, "btnApprove")
+                                    if approve_btn.is_displayed() and approve_btn.is_enabled():
+                                        self.log("Next request loaded after extended wait - continuing...", "SUCCESS")
+                                        request_number += 1
+                                        should_continue = True
+                                        break
+                                except:
+                                    pass
+
+                            # Wait and retry
+                            self.interruptible_sleep(5)
+
+                            # Re-check for Next Request button after wait
+                            try:
+                                for sel in ["//input[@value='Next Request']", "//input[contains(@value, 'Next')][@type='button']"]:
+                                    btns = self.driver.find_elements(By.XPATH, sel)
+                                    for btn in btns:
+                                        if btn.is_displayed() and btn.is_enabled():
+                                            self.log("Found Next Request button (late) - clicking...")
+                                            self.driver.execute_script("arguments[0].scrollIntoView(true);", btn)
+                                            self.interruptible_sleep(0.3)
+                                            btn.click()
+                                            self.log("Clicked Next Request button", "SUCCESS")
+                                            try:
+                                                self.cancellable_wait(15, EC.presence_of_element_located((By.ID, "txtComment")))
+                                                self.log("Approval form loaded", "SUCCESS")
+                                            except:
+                                                self.interruptible_sleep(3)
+                                            request_number += 1
+                                            should_continue = True
+                                            break
+                                    if should_continue:
+                                        break
+                            except:
+                                pass
+
+                            if should_continue:
+                                break
+                    except:
+                        self.interruptible_sleep(3)
+
+                if should_continue:
+                    continue
+
+                if should_break:
+                    break
 
                 self.log("Could not find next action - batch complete", "SUCCESS")
                 break
@@ -1714,7 +1768,8 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                 except:
                     pass
 
-                for poll_attempt in range(15):
+                auto_loaded = False
+                for poll_attempt in range(25):
                     self.check_cancelled()
                     try:
                         candidates = []
@@ -1746,10 +1801,24 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                         if next_request_found:
                             break
 
-                        if poll_attempt < 14:
+                        # Also check for auto-loaded next request during polling
+                        if poll_attempt >= 3:
+                            try:
+                                reject_btn = self.driver.find_element(By.ID, "btnReject")
+                                comment_fields = self.driver.find_elements(By.ID, "txtComment")
+                                if comment_fields and reject_btn.is_displayed() and reject_btn.is_enabled():
+                                    fresh_url = self.driver.current_url
+                                    if "infoMsg" not in fresh_url:
+                                        self.log("Next request auto-loaded - continuing...", "SUCCESS")
+                                        auto_loaded = True
+                                        break
+                            except:
+                                pass
+
+                        if poll_attempt < 24:
                             self.interruptible_sleep(2)  # Wait between polls
                     except:
-                        if poll_attempt < 14:
+                        if poll_attempt < 24:
                             self.interruptible_sleep(2)
 
                 if next_request_found and next_request_button:
@@ -1773,49 +1842,88 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
                     request_number += 1
                     continue
 
-                # Check if Reject button still exists (auto-loaded next request)
-                try:
-                    reject_btn = self.driver.find_element(By.ID, "btnReject")
-                    comment_field = self.driver.find_elements(By.ID, "txtComment")
-                    if comment_field and reject_btn.is_displayed() and reject_btn.is_enabled():
+                if auto_loaded:
+                    request_number += 1
+                    continue
+
+                # Check for definitive exit conditions with retries
+                should_continue = False
+                should_break = False
+                for stabilize_attempt in range(3):
+                    try:
+                        cancel_exists = len(self.driver.find_elements(By.XPATH, "//input[@value='Cancel']")) > 0
+                        reject_exists = len(self.driver.find_elements(By.ID, "btnReject")) > 0
+                        comment_exists = len(self.driver.find_elements(By.ID, "txtComment")) > 0
                         fresh_url = self.driver.current_url
-                        if "infoMsg" not in fresh_url:
-                            self.log("Next request loaded automatically - continuing...", "SUCCESS")
-                            request_number += 1
-                            continue
-                except:
-                    pass
+                        has_info_msg = "infoMsg" in fresh_url
 
-                # Check for definitive exit conditions
-                try:
-                    cancel_exists = len(self.driver.find_elements(By.XPATH, "//input[@value='Cancel']")) > 0
-                    reject_exists = len(self.driver.find_elements(By.ID, "btnReject")) > 0
+                        if cancel_exists and not reject_exists:
+                            self.log("Found Cancel button only - all requests processed", "SUCCESS")
+                            should_break = True
+                            break
 
-                    if cancel_exists and not reject_exists:
-                        self.log("Found Cancel button only - all requests processed", "SUCCESS")
-                        break
+                        if not cancel_exists and not reject_exists:
+                            self.log("All requests processed", "SUCCESS")
+                            should_break = True
+                            break
 
-                    if not cancel_exists and not reject_exists:
-                        self.log("All requests processed", "SUCCESS")
-                        break
+                        if has_info_msg:
+                            self.log("Success page detected (infoMsg in URL) - batch complete", "SUCCESS")
+                            should_break = True
+                            break
 
-                    # Reject button exists — page may still be loading. Wait and retry.
-                    if reject_exists:
-                        self.log("Reject button detected, waiting for page to stabilize...", "WARNING")
-                        self.interruptible_sleep(5)
-                        try:
-                            reject_btn = self.driver.find_element(By.ID, "btnReject")
-                            comment_field = self.driver.find_elements(By.ID, "txtComment")
-                            if comment_field and reject_btn.is_displayed() and reject_btn.is_enabled():
-                                fresh_url = self.driver.current_url
-                                if "infoMsg" not in fresh_url:
-                                    self.log("Next request loaded after extended wait - continuing...", "SUCCESS")
-                                    request_number += 1
-                                    continue
-                        except:
-                            pass
-                except:
-                    pass
+                        # Reject button exists — page may still be loading
+                        if reject_exists:
+                            self.log(f"Stabilize check {stabilize_attempt + 1}/3: reject={reject_exists}, comment={comment_exists}, infoMsg={has_info_msg}", "WARNING")
+
+                            if comment_exists:
+                                try:
+                                    reject_btn = self.driver.find_element(By.ID, "btnReject")
+                                    if reject_btn.is_displayed() and reject_btn.is_enabled():
+                                        self.log("Next request loaded after extended wait - continuing...", "SUCCESS")
+                                        request_number += 1
+                                        should_continue = True
+                                        break
+                                except:
+                                    pass
+
+                            # Wait and retry
+                            self.interruptible_sleep(5)
+
+                            # Re-check for Next Request button after wait
+                            try:
+                                for sel in ["//input[@value='Next Request']", "//input[contains(@value, 'Next')][@type='button']"]:
+                                    btns = self.driver.find_elements(By.XPATH, sel)
+                                    for btn in btns:
+                                        if btn.is_displayed() and btn.is_enabled():
+                                            self.log("Found Next Request button (late) - clicking...")
+                                            self.driver.execute_script("arguments[0].scrollIntoView(true);", btn)
+                                            self.interruptible_sleep(0.3)
+                                            btn.click()
+                                            self.log("Clicked Next Request button", "SUCCESS")
+                                            try:
+                                                self.cancellable_wait(15, EC.presence_of_element_located((By.ID, "txtComment")))
+                                                self.log("Rejection form loaded", "SUCCESS")
+                                            except:
+                                                self.interruptible_sleep(3)
+                                            request_number += 1
+                                            should_continue = True
+                                            break
+                                    if should_continue:
+                                        break
+                            except:
+                                pass
+
+                            if should_continue:
+                                break
+                    except:
+                        self.interruptible_sleep(3)
+
+                if should_continue:
+                    continue
+
+                if should_break:
+                    break
 
                 self.log("Could not find next action - batch complete", "SUCCESS")
                 break
