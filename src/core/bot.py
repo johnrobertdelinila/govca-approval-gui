@@ -1330,17 +1330,47 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         self.log("Starting approval process...")
 
         try:
-            # Click Batch Response button
+            # Click Batch Response button (or Respond link for single user)
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             self.interruptible_sleep(1)
 
-            batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
-            self.interruptible_sleep(0.5)
-
             url_before_batch = self.driver.current_url
-            batch_respond_button.click()
-            self.log("Batch Response button clicked", "SUCCESS")
+
+            if total_requests == 1:
+                # Single user selected - Batch Response is disabled, click row's Respond link
+                self.log("Single user selected - using direct Respond link...")
+                checked_cb = None
+                checkboxes = self.driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox'][name='chkBatch']")
+                for cb in checkboxes:
+                    try:
+                        if cb.is_selected():
+                            checked_cb = cb
+                            break
+                    except:
+                        continue
+
+                if checked_cb:
+                    row = checked_cb.find_element(By.XPATH, "./ancestor::tr[1]")
+                    respond_link = row.find_element(By.XPATH, ".//a[text()='Respond']")
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", respond_link)
+                    self.interruptible_sleep(0.5)
+                    respond_link.click()
+                    self.log("Clicked Respond link for single user", "SUCCESS")
+                else:
+                    # Fallback: try Batch Response anyway
+                    self.log("Could not find checked checkbox, trying Batch Response...", "WARNING")
+                    batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
+                    self.interruptible_sleep(0.5)
+                    batch_respond_button.click()
+                    self.log("Batch Response button clicked", "SUCCESS")
+            else:
+                # Multiple users - use Batch Response as normal
+                batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
+                self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
+                self.interruptible_sleep(0.5)
+                batch_respond_button.click()
+                self.log("Batch Response button clicked", "SUCCESS")
 
             # Wait for dialog/popup
             self.log("Waiting for approval dialog...")
@@ -1665,17 +1695,47 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         self.log("Starting rejection process...")
 
         try:
-            # Click Batch Response button
+            # Click Batch Response button (or Respond link for single user)
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             self.interruptible_sleep(1)
 
-            batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
-            self.interruptible_sleep(0.5)
-
             url_before_batch = self.driver.current_url
-            batch_respond_button.click()
-            self.log("Batch Response button clicked", "SUCCESS")
+
+            if total_requests == 1:
+                # Single user selected - Batch Response is disabled, click row's Respond link
+                self.log("Single user selected - using direct Respond link...")
+                checked_cb = None
+                checkboxes = self.driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox'][name='chkBatch']")
+                for cb in checkboxes:
+                    try:
+                        if cb.is_selected():
+                            checked_cb = cb
+                            break
+                    except:
+                        continue
+
+                if checked_cb:
+                    row = checked_cb.find_element(By.XPATH, "./ancestor::tr[1]")
+                    respond_link = row.find_element(By.XPATH, ".//a[text()='Respond']")
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", respond_link)
+                    self.interruptible_sleep(0.5)
+                    respond_link.click()
+                    self.log("Clicked Respond link for single user", "SUCCESS")
+                else:
+                    # Fallback: try Batch Response anyway
+                    self.log("Could not find checked checkbox, trying Batch Response...", "WARNING")
+                    batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
+                    self.interruptible_sleep(0.5)
+                    batch_respond_button.click()
+                    self.log("Batch Response button clicked", "SUCCESS")
+            else:
+                # Multiple users - use Batch Response as normal
+                batch_respond_button = self.driver.find_element(By.ID, "btnBatchRespond")
+                self.driver.execute_script("arguments[0].scrollIntoView(true);", batch_respond_button)
+                self.interruptible_sleep(0.5)
+                batch_respond_button.click()
+                self.log("Batch Response button clicked", "SUCCESS")
 
             # Wait for dialog/popup
             self.log("Waiting for rejection dialog...")

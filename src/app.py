@@ -149,7 +149,17 @@ class Typography:
 
 
 class CardFrame(ctk.CTkFrame):
-    """A card-style frame with modern styling"""
+    """A card-style frame with modern styling and hover glow"""
+
+    @staticmethod
+    def _blend_colors(hex1, hex2, ratio):
+        """Blend two hex colors. ratio=0 returns hex1, ratio=1 returns hex2."""
+        r1, g1, b1 = int(hex1[1:3], 16), int(hex1[3:5], 16), int(hex1[5:7], 16)
+        r2, g2, b2 = int(hex2[1:3], 16), int(hex2[3:5], 16), int(hex2[5:7], 16)
+        r = int(r1 + (r2 - r1) * ratio)
+        g = int(g1 + (g2 - g1) * ratio)
+        b = int(b1 + (b2 - b1) * ratio)
+        return f"#{r:02x}{g:02x}{b:02x}"
 
     def __init__(self, parent, **kwargs):
         # Default card styling
@@ -160,10 +170,38 @@ class CardFrame(ctk.CTkFrame):
 
         super().__init__(parent, **kwargs)
 
+        # Compute glow border color (40% blend toward accent)
+        self._normal_border = ColorPalette.get('border')
+        self._glow_border = self._blend_colors(
+            self._normal_border, ColorPalette.get('accent_primary'), 0.4
+        )
+
+        # Hover glow bindings
+        self.bind('<Enter>', self._on_enter)
+        self.bind('<Leave>', self._on_leave)
+
+    def _on_enter(self, event):
+        self.configure(border_color=self._glow_border)
+
+    def _on_leave(self, event):
+        # Check if pointer is still inside (avoids flicker from child widgets)
+        x, y = self.winfo_pointerxy()
+        widget_x = self.winfo_rootx()
+        widget_y = self.winfo_rooty()
+        widget_w = self.winfo_width()
+        widget_h = self.winfo_height()
+        if widget_x <= x <= widget_x + widget_w and widget_y <= y <= widget_y + widget_h:
+            return
+        self.configure(border_color=self._normal_border)
+
     def update_colors(self):
         """Update colors based on current theme"""
+        self._normal_border = ColorPalette.get('border')
+        self._glow_border = self._blend_colors(
+            self._normal_border, ColorPalette.get('accent_primary'), 0.4
+        )
         self.configure(
-            border_color=ColorPalette.get('border'),
+            border_color=self._normal_border,
             fg_color=ColorPalette.get('bg_card')
         )
 
@@ -618,7 +656,8 @@ class GovCAApp(ctk.CTk):
         self.progress_tracker = ProgressTracker()
         self.selected_workflow = ctk.StringVar(value="1")
         self.is_running = False
-        self.logs_visible = False  # Animation is default view
+        self.workflow_collapsed = False
+        self.log_view_mode = "animation"  # "animation" | "split" | "logs"
         self.animation_running = False
         self.animation_frame_index = 0
         self.animation_after_id = None
@@ -632,6 +671,13 @@ class GovCAApp(ctk.CTk):
         # Stop escalation timers
         self._escalate_timer_id = None
         self._finalize_timer_id = None
+
+        # Domain tracker state (for counterpart processing)
+        self._domain_tracker_visible = False
+        self._domain_tracker_domains = []       # ["NCR00Sign", "NCR00Auth"]
+        self._domain_tracker_statuses = {}      # {"NCR00Sign": "processing", "NCR00Auth": "pending"}
+        self._spinner_animation_id = None
+        self._spinner_frame_index = 0
 
         # Track window size for responsive layout
         self._last_width = 950
@@ -727,12 +773,12 @@ class GovCAApp(ctk.CTk):
         self.main_paned.pack(fill="both", expand=True, pady=(0, 6))
 
         # Configuration pane (upper)
-        self.config_pane = ctk.CTkFrame(self.main_paned, fg_color=ColorPalette.get('bg_card'), corner_radius=12)
+        self.config_pane = CardFrame(self.main_paned)
         self._create_config_section(self.config_pane)
         self.main_paned.add(self.config_pane, minsize=80, height=180)
 
         # Log/Animation pane (lower)
-        self.log_pane = ctk.CTkFrame(self.main_paned, fg_color=ColorPalette.get('bg_card'), corner_radius=12)
+        self.log_pane = CardFrame(self.main_paned)
         self._create_log_section(self.log_pane)
         self.main_paned.add(self.log_pane, minsize=120, height=250)
 
@@ -828,19 +874,47 @@ class GovCAApp(ctk.CTk):
         section_frame = CardFrame(parent)
         section_frame.pack(fill="x", pady=(0, 4))
 
-        # Header
-        header = ctk.CTkLabel(
-            section_frame,
+        # Clickable header row with chevron
+        header_row = ctk.CTkFrame(section_frame, fg_color="transparent")
+        header_row.pack(fill="x", padx=15, pady=(3, 1))
+
+        self.workflow_chevron = ctk.CTkLabel(
+            header_row,
+            text="▼",
+            font=Typography.section_header(),
+            text_color=ColorPalette.get('text_muted'),
+            width=16
+        )
+        self.workflow_chevron.pack(side="left")
+
+        header_label = ctk.CTkLabel(
+            header_row,
             text="SELECT WORKFLOW",
             font=Typography.section_header(),
             text_color=ColorPalette.get('text_muted')
         )
-        header.pack(anchor="w", padx=15, pady=(3, 1))
+        header_label.pack(side="left", padx=(4, 0))
+
+        # Make header row clickable
+        for widget in [header_row, self.workflow_chevron, header_label]:
+            widget.bind('<Button-1>', lambda e: self._toggle_workflow_section())
+            widget.configure(cursor="hand2")
+
+        # Collapsed summary label (hidden by default)
+        self.workflow_summary_label = ctk.CTkLabel(
+            section_frame,
+            text="",
+            font=Typography.heading_sm(),
+            text_color=ColorPalette.get('text_primary'),
+            anchor="w"
+        )
+        # Not packed yet — shown only when collapsed
 
         # Workflow buttons container
-        buttons_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
-        buttons_frame.pack(fill="x", padx=15, pady=(0, 3))
-        buttons_frame.grid_columnconfigure((0, 1, 2), weight=1, uniform="workflow")
+        self.workflow_buttons_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
+        self.workflow_buttons_frame.pack(fill="x", padx=15, pady=(0, 3))
+        self.workflow_buttons_frame.grid_columnconfigure((0, 1, 2), weight=1, uniform="workflow")
+        buttons_frame = self.workflow_buttons_frame
 
         workflows = [
             ("1", "Add User", "Batch Approve", "Batch approve pending users"),
@@ -907,6 +981,30 @@ class GovCAApp(ctk.CTk):
         else:
             container.configure(border_color=ColorPalette.get('border'))
 
+    def _toggle_workflow_section(self):
+        """Toggle workflow section between expanded and collapsed states"""
+        self.workflow_collapsed = not self.workflow_collapsed
+        if self.workflow_collapsed:
+            self.workflow_buttons_frame.pack_forget()
+            self._update_workflow_summary()
+            self.workflow_summary_label.pack(fill="x", padx=15, pady=(0, 6))
+            self.workflow_chevron.configure(text="▶")
+        else:
+            self.workflow_summary_label.pack_forget()
+            self.workflow_buttons_frame.pack(fill="x", padx=15, pady=(0, 3))
+            self.workflow_chevron.configure(text="▼")
+
+    def _update_workflow_summary(self):
+        """Update the collapsed workflow summary text"""
+        workflow_labels = {
+            "1": ("Add User", "Batch Approve"),
+            "2": ("Revoke Cert", "One-by-One"),
+            "3": ("Assign Group", "User Groups"),
+        }
+        value = self.selected_workflow.get()
+        title, subtitle = workflow_labels.get(value, ("Unknown", ""))
+        self.workflow_summary_label.configure(text=f"{title}  ·  {subtitle}")
+
     def _select_workflow(self, value):
         """Handle workflow selection"""
         old_value = self.selected_workflow.get()
@@ -933,6 +1031,10 @@ class GovCAApp(ctk.CTk):
 
         # Update config visibility
         self._update_config_visibility()
+
+        # Refresh summary if collapsed
+        if self.workflow_collapsed:
+            self._update_workflow_summary()
 
     def _create_config_section(self, parent):
         """Create configuration section with OPTIONS only (settings moved to dialog)"""
@@ -1340,7 +1442,7 @@ class GovCAApp(ctk.CTk):
             command=self._toggle_logs
         )
         self.toggle_logs_btn.pack(side="right", padx=(8, 0))
-        self.toggle_logs_tooltip = ToolTip(self.toggle_logs_btn, "Show Logs")
+        self.toggle_logs_tooltip = ToolTip(self.toggle_logs_btn, "Show Split View")
 
         # Copy button
         self.copy_logs_btn = ctk.CTkButton(
@@ -1428,30 +1530,47 @@ class GovCAApp(ctk.CTk):
         self.message_label.pack(pady=(15, 30))
 
     def _toggle_logs(self):
-        """Toggle log visibility"""
-        if self.logs_visible:
-            # Hide logs, show animation if running
-            self.log_text.pack_forget()
+        """Cycle log view: animation -> split -> logs -> animation"""
+        cycle = {"animation": "split", "split": "logs", "logs": "animation"}
+        self._set_log_view(cycle[self.log_view_mode])
+
+    def _set_log_view(self, mode):
+        """Set the log view layout to the given mode."""
+        self.log_view_mode = mode
+
+        # Reset: forget both widgets and restore propagation
+        self.animation_frame.pack_forget()
+        self.log_text.pack_forget()
+        self.animation_frame.pack_propagate(True)
+
+        if mode == "animation":
+            # Animation fills all space, hide log controls
             self.autoscroll_switch.pack_forget()
             self.copy_logs_btn.pack_forget()
-            self.toggle_logs_tooltip.update_text("Show Logs")
-
+            self.animation_frame.pack(fill="both", expand=True)
             if self.is_running:
-                self.animation_frame.pack(fill="both", expand=True)
                 self._start_animation()
-            else:
-                self.animation_frame.pack(fill="both", expand=True)
+            self.toggle_logs_tooltip.update_text("Show Split View")
 
-            self.logs_visible = False
-        else:
-            # Show logs, hide animation
+        elif mode == "split":
+            # GIF on left (fixed 320px), logs on right
+            self.autoscroll_switch.pack(side="right")
+            self.copy_logs_btn.pack(side="right", padx=(8, 0))
+            self.animation_frame.configure(width=320)
+            self.animation_frame.pack_propagate(False)
+            self.animation_frame.pack(side="left", fill="y")
+            self.log_text.pack(side="left", fill="both", expand=True)
+            if self.is_running:
+                self._start_animation()
+            self.toggle_logs_tooltip.update_text("Show Logs Only")
+
+        elif mode == "logs":
+            # Logs fill all space, hide animation
             self._stop_animation()
-            self.animation_frame.pack_forget()
             self.autoscroll_switch.pack(side="right")
             self.copy_logs_btn.pack(side="right", padx=(8, 0))
             self.log_text.pack(fill="both", expand=True)
-            self.toggle_logs_tooltip.update_text("Hide Logs")
-            self.logs_visible = True
+            self.toggle_logs_tooltip.update_text("Show Animation")
 
     def _load_gif_frames(self):
         """Load all frames from the GIF with robust error handling"""
@@ -1607,6 +1726,126 @@ class GovCAApp(ctk.CTk):
                 font=Typography.heading_md()
             )
 
+    # =========================================================================
+    # DOMAIN TRACKER — visual status for counterpart processing
+    # =========================================================================
+
+    def _compute_counterpart_domain(self, domain):
+        """Sign↔Auth string swap (replicates bot logic)"""
+        if "Sign" in domain:
+            return domain.replace("Sign", "Auth")
+        elif "Auth" in domain:
+            return domain.replace("Auth", "Sign")
+        return None
+
+    def _setup_domain_tracker(self, primary_domain):
+        """Initialize tracker: set domain names, show frame, hide phase_label"""
+        counterpart = self._compute_counterpart_domain(primary_domain)
+        if not counterpart:
+            return
+
+        self._domain_tracker_domains = [primary_domain, counterpart]
+        self._domain_tracker_statuses = {
+            primary_domain: "processing",
+            counterpart: "pending",
+        }
+        self._domain_tracker_visible = True
+
+        # Set domain labels
+        self.domain1_name.configure(text=primary_domain)
+        self.domain2_name.configure(text=counterpart)
+
+        # Set initial icons
+        self._update_domain_icon(self.domain1_icon, "processing")
+        self._update_domain_icon(self.domain2_icon, "pending")
+
+        # Show tracker, hide plain phase_label
+        self.phase_label.pack_forget()
+        self.domain_tracker_frame.pack(anchor="w", pady=(0, 4))
+
+        # Start spinner animation
+        self._start_domain_spinner()
+
+    def _update_domain_icon(self, icon_label, status):
+        """Set icon text + color based on status"""
+        if status == "pending":
+            icon_label.configure(
+                text="○",
+                text_color=ColorPalette.get('text_muted')
+            )
+        elif status == "processing":
+            # Spinner will be animated via _tick_domain_spinner
+            icon_label.configure(
+                text="◐",
+                text_color=ColorPalette.get('accent_primary')
+            )
+        elif status == "completed":
+            icon_label.configure(
+                text="✓",
+                text_color=ColorPalette.get('accent_success')
+            )
+
+    def _start_domain_spinner(self):
+        """Start after() loop cycling spinner characters"""
+        self._spinner_frame_index = 0
+        self._tick_domain_spinner()
+
+    def _tick_domain_spinner(self):
+        """Advance spinner frame on the currently-processing icon"""
+        spinner_chars = ["◐", "◓", "◑", "◒"]
+        self._spinner_frame_index = (self._spinner_frame_index + 1) % len(spinner_chars)
+        char = spinner_chars[self._spinner_frame_index]
+
+        # Update the icon of whichever domain is currently processing
+        for i, domain in enumerate(self._domain_tracker_domains):
+            if self._domain_tracker_statuses.get(domain) == "processing":
+                icon_label = self.domain1_icon if i == 0 else self.domain2_icon
+                icon_label.configure(text=char)
+
+        self._spinner_animation_id = self.after(150, self._tick_domain_spinner)
+
+    def _stop_domain_spinner(self):
+        """Cancel the after() timer"""
+        if self._spinner_animation_id is not None:
+            self.after_cancel(self._spinner_animation_id)
+            self._spinner_animation_id = None
+
+    def _update_domain_tracker(self, phase, total_phases, phase_label):
+        """Main logic: compare phase_label to domain names, transition statuses"""
+        if not self._domain_tracker_domains:
+            return
+
+        domain1, domain2 = self._domain_tracker_domains
+
+        # Determine which domain is now active based on phase_label
+        if phase_label == domain2 and self._domain_tracker_statuses[domain2] != "processing":
+            # Switching to domain2 — mark domain1 as completed
+            self._domain_tracker_statuses[domain1] = "completed"
+            self._domain_tracker_statuses[domain2] = "processing"
+            self._update_domain_icon(self.domain1_icon, "completed")
+            self._update_domain_icon(self.domain2_icon, "processing")
+
+        elif phase_label == domain1 and self._domain_tracker_statuses[domain1] != "processing":
+            # Re-entering domain1 (unlikely but handled)
+            self._domain_tracker_statuses[domain1] = "processing"
+            self._update_domain_icon(self.domain1_icon, "processing")
+
+    def _hide_domain_tracker(self):
+        """Stop spinner, hide frame, reset state"""
+        self._stop_domain_spinner()
+        self._domain_tracker_visible = False
+        self._domain_tracker_domains = []
+        self._domain_tracker_statuses = {}
+        self.domain_tracker_frame.pack_forget()
+
+    def _complete_domain_tracker(self):
+        """Mark all domains as completed (green checks), stop spinner"""
+        self._stop_domain_spinner()
+        for i, domain in enumerate(self._domain_tracker_domains):
+            self._domain_tracker_statuses[domain] = "completed"
+            icon_label = self.domain1_icon if i == 0 else self.domain2_icon
+            self._update_domain_icon(icon_label, "completed")
+
     def _create_progress_section(self, parent):
         """Create progress section with animated progress bar and phase indicator"""
         progress_frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -1620,6 +1859,44 @@ class GovCAApp(ctk.CTk):
             text_color=ColorPalette.get('accent_primary')
         )
         # Initially hidden - will be shown when phase info is available
+
+        # Domain tracker frame (shown during counterpart processing)
+        self.domain_tracker_frame = ctk.CTkFrame(progress_frame, fg_color="transparent")
+        # Initially hidden - packed when counterpart processing starts
+
+        # Domain 1 widgets
+        self.domain1_icon = ctk.CTkLabel(
+            self.domain_tracker_frame,
+            text="○",
+            font=ctk.CTkFont(size=14),
+            text_color=ColorPalette.get('text_muted'),
+            width=20
+        )
+        self.domain1_icon.pack(side="left", padx=(0, 2))
+        self.domain1_name = ctk.CTkLabel(
+            self.domain_tracker_frame,
+            text="",
+            font=Typography.body_sm(),
+            text_color=ColorPalette.get('text_secondary')
+        )
+        self.domain1_name.pack(side="left", padx=(0, 16))
+
+        # Domain 2 widgets
+        self.domain2_icon = ctk.CTkLabel(
+            self.domain_tracker_frame,
+            text="○",
+            font=ctk.CTkFont(size=14),
+            text_color=ColorPalette.get('text_muted'),
+            width=20
+        )
+        self.domain2_icon.pack(side="left", padx=(0, 2))
+        self.domain2_name = ctk.CTkLabel(
+            self.domain_tracker_frame,
+            text="",
+            font=Typography.body_sm(),
+            text_color=ColorPalette.get('text_secondary')
+        )
+        self.domain2_name.pack(side="left")
 
         # Use animated progress bar
         self.progress_bar = AnimatedProgressBar(
@@ -1911,17 +2188,35 @@ class GovCAApp(ctk.CTk):
             self.log_text.configure(state="disabled")
             self.log_buffer.clear()
 
-    def _notify_user(self, success=True):
+    def _notify_user(self, success=True, processed_count=0):
         """Send system notification and request attention when automation finishes"""
         try:
+            workflow_name = getattr(self, '_current_workflow_name', 'Workflow')
+            if success:
+                if processed_count > 0:
+                    msg = f"{workflow_name} — Processed {processed_count} item(s)"
+                else:
+                    msg = f"{workflow_name} completed successfully!"
+            else:
+                msg = f"{workflow_name} finished with errors."
+
             if sys.platform == "darwin":
-                # macOS: system notification
+                # macOS: system notification with app icon
                 title = "PNPKI Approval Automation"
-                msg = "Workflow completed successfully!" if success else "Workflow finished with errors."
-                subprocess.Popen([
-                    "osascript", "-e",
-                    f'display notification "{msg}" with title "{title}" sound name "default"'
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if getattr(sys, 'frozen', False):
+                    # Bundled .app — use bundle identifier so macOS shows our app icon
+                    script = (
+                        'tell application id "com.govca.approval"\n'
+                        f'  display notification "{msg}" with title "{title}" sound name "default"\n'
+                        'end tell'
+                    )
+                else:
+                    # Development — fall back to plain osascript (shows Script Editor icon)
+                    script = f'display notification "{msg}" with title "{title}" sound name "default"'
+                subprocess.Popen(
+                    ["osascript", "-e", script],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
                 # Bounce dock icon (request user attention)
                 subprocess.Popen([
                     "osascript", "-e",
@@ -1931,7 +2226,6 @@ class GovCAApp(ctk.CTk):
             elif sys.platform == "win32":
                 # Windows: toast notification via PowerShell
                 title = "PNPKI Approval Automation"
-                msg = "Workflow completed successfully!" if success else "Workflow finished with errors."
                 ps_script = (
                     "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
                     "ContentType = WindowsRuntime] > $null; "
@@ -1991,14 +2285,18 @@ class GovCAApp(ctk.CTk):
                 phase_label = data['phase_label']
 
                 # Update phase indicator
-                if total_phases > 1 and phase_label:
-                    self.phase_label.configure(text=f"Phase {phase}/{total_phases}: {phase_label}")
-                    self.phase_label.pack(anchor="w", pady=(0, 4))
-                elif phase_label:
-                    self.phase_label.configure(text=phase_label)
-                    self.phase_label.pack(anchor="w", pady=(0, 4))
+                if self._domain_tracker_visible:
+                    # Use visual domain tracker instead of plain text
+                    self._update_domain_tracker(phase, total_phases, phase_label)
                 else:
-                    self.phase_label.pack_forget()
+                    if total_phases > 1 and phase_label:
+                        self.phase_label.configure(text=f"Phase {phase}/{total_phases}: {phase_label}")
+                        self.phase_label.pack(anchor="w", pady=(0, 4))
+                    elif phase_label:
+                        self.phase_label.configure(text=phase_label)
+                        self.phase_label.pack(anchor="w", pady=(0, 4))
+                    else:
+                        self.phase_label.pack_forget()
 
                 # Update progress bar
                 if total > 0:
@@ -2025,14 +2323,21 @@ class GovCAApp(ctk.CTk):
                 # Check if there were errors in the log
                 has_errors = "ERROR" in self.log_text.get("1.0", "end")
 
+                # Update domain tracker on completion
+                if self._domain_tracker_visible:
+                    if was_running and not has_errors and not self.cancel_event.is_set():
+                        self._complete_domain_tracker()
+                    else:
+                        self._hide_domain_tracker()
+
                 # Stop animation and show result
-                if was_running and not self.logs_visible:
+                if was_running and self.log_view_mode != "logs":
                     self._stop_animation()
                     self._show_result(success=not has_errors)
 
                 # Notify user (system notification + dock bounce / taskbar flash)
                 if was_running:
-                    self._notify_user(success=not has_errors)
+                    self._notify_user(success=not has_errors, processed_count=current)
 
                 # Update session status after workflow completes
                 self._update_session_status()
@@ -2041,6 +2346,8 @@ class GovCAApp(ctk.CTk):
                 if current == 0:
                     self.status_label.configure(text="Ready")
                     self.phase_label.pack_forget()
+                    if self._domain_tracker_visible:
+                        self._hide_domain_tracker()
 
             # Periodic session status check (every 5 seconds = 50 polls at 100ms)
             if not hasattr(self, '_session_check_counter'):
@@ -2118,9 +2425,18 @@ class GovCAApp(ctk.CTk):
         self.is_running = True
         self._update_button_states()
 
-        # Start animation if logs are hidden
-        if not self.logs_visible:
-            self.animation_frame.pack(fill="both", expand=True)
+        # Setup domain tracker for counterpart processing
+        use_counterpart = self.counterpart_var.get()
+        if workflow in ("1", "2") and use_counterpart:
+            self._setup_domain_tracker(domain)
+        elif workflow == "3" and not self.all_domains_var.get() and use_counterpart:
+            self._setup_domain_tracker(domain)
+        else:
+            self._hide_domain_tracker()
+
+        # Start animation if animation is visible (animation or split mode)
+        if self.log_view_mode != "logs":
+            self._set_log_view(self.log_view_mode)  # Re-apply layout to ensure animation is packed
             self._start_animation()
 
         # Reuse existing bot or create new one
@@ -2193,15 +2509,18 @@ class GovCAApp(ctk.CTk):
             # NOTE: Browser is intentionally kept open for session reuse
             # User can close it manually via "Close Browser" button
 
-        self.automation_thread = threading.Thread(target=run_automation, daemon=True)
-        self.automation_thread.start()
-
         workflow_names = {
             "1": "Add User (Batch Reject)" if batch_reject_mode else "Add User (Batch Approve)",
             "2": "Revoke Cert",
             "3": "Assign Group - All Domains" if self.all_domains_var.get() else "Assign Group (Single)"
         }
-        self._log(f"Started workflow {workflow}: {workflow_names.get(workflow, 'Unknown')}", "INFO")
+        self._current_workflow = workflow
+        self._current_workflow_name = workflow_names.get(workflow, "Unknown")
+
+        self.automation_thread = threading.Thread(target=run_automation, daemon=True)
+        self.automation_thread.start()
+
+        self._log(f"Started workflow {workflow}: {self._current_workflow_name}", "INFO")
 
     def _stop_automation(self):
         """Stop the automation process with escalation."""
@@ -2244,7 +2563,7 @@ class GovCAApp(ctk.CTk):
             self.automation_thread = None
             self._update_button_states()
             self.status_label.configure(text="Stopped (force)")
-            if not self.logs_visible:
+            if self.log_view_mode != "logs":
                 self._stop_animation()
                 self._show_result(success=False)
             self._notify_user(success=False)
