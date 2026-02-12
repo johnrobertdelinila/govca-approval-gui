@@ -69,6 +69,7 @@ class GovCAApprovalBot:
         self.progress_callback = progress_callback or (lambda *args: None)
         self.cancel_event = cancel_event or threading.Event()
         self.auth_method = auth_method or "Soft Token (Select Certificate)"
+        self._temp_profile_dir = None  # Temp profile copy when Firefox is already open
 
     def _default_log(self, message, level="INFO"):
         """Default logging to console"""
@@ -439,6 +440,27 @@ class GovCAApprovalBot:
             except Exception as e:
                 self.log(f"Could not remove {lock_file}: {e}", "WARNING")
 
+    def _copy_profile_to_temp(self, profile_path):
+        """Copy Firefox profile to a temp directory, excluding caches for speed"""
+        skip_dirs = {
+            'cache2', 'startupCache', 'storage', 'crashes',
+            'thumbnails', 'shader-cache', 'safebrowsing',
+            'datareporting', 'saved-telemetry-pings'
+        }
+        skip_files = {'.parentlock', 'parent.lock', 'lock'}
+
+        def ignore_fn(directory, contents):
+            ignored = set()
+            for item in contents:
+                if item in skip_dirs or item in skip_files:
+                    ignored.add(item)
+            return ignored
+
+        temp_dir = tempfile.mkdtemp(prefix="govca_firefox_profile_")
+        shutil.copytree(profile_path, os.path.join(temp_dir, "profile"),
+                        ignore=ignore_fn, dirs_exist_ok=False)
+        return os.path.join(temp_dir, "profile")
+
     def _ensure_safenet_module(self, profile_path):
         """Ensure SafeNet eToken PKCS#11 module is registered in Firefox profile"""
         pkcs11_path = os.path.join(profile_path, "pkcs11.txt")
@@ -469,6 +491,71 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         with open(pkcs11_path, 'a') as f:
             f.write(safenet_config)
         self.log("Registered SafeNet eToken module", "SUCCESS")
+
+    def _apply_firefox_preferences(self, options):
+        """Apply standard Firefox preferences for certificate handling and SSL/TLS"""
+        # Certificate selection based on auth method
+        if self.auth_method == "Soft Token (Select Certificate)":
+            options.set_preference("security.default_personal_cert", "Ask Every Time")
+            self.log("Certificate selection: User will be prompted to select certificate")
+        else:
+            options.set_preference("security.default_personal_cert", "Select Automatically")
+        options.set_preference("webdriver_accept_untrusted_certs", True)
+        options.set_preference("accept_untrusted_certs", True)
+        options.set_preference("marionette.port", 0)
+
+        # Additional SSL/TLS preferences for government sites
+        options.set_preference("security.enterprise_roots.enabled", True)
+        options.set_preference("security.cert_pinning.enforcement_level", 0)
+        options.set_preference("security.mixed_content.block_active_content", False)
+        options.set_preference("security.ssl.enable_ocsp_stapling", False)
+        options.set_preference("network.stricttransportsecurity.preloadlist", False)
+        options.set_preference("security.tls.version.min", 1)
+        options.set_preference("security.ssl.require_safe_negotiation", False)
+
+        # Increase timeouts for hardware token PIN entry
+        options.set_preference("network.http.connection-timeout", 90)
+        options.set_preference("network.http.response.timeout", 90)
+        options.set_preference("security.OCSP.timeoutMilliseconds.hard", 30000)
+
+        # PKCS#11 module handling for hardware tokens (SafeNet eToken)
+        options.set_preference("security.osclientcerts.autoload", True)
+        options.set_preference("security.remember_cert_checkbox_default_setting", False)
+
+        # Disable caching that can interfere with hardware tokens
+        options.set_preference("browser.cache.disk.enable", False)
+        options.set_preference("browser.cache.memory.enable", False)
+        options.set_preference("browser.cache.offline.enable", False)
+        options.set_preference("network.http.use-cache", False)
+
+    def _launch_firefox(self, options):
+        """Launch Firefox with given options, returns (driver, wait)"""
+        geckodriver_path = get_bundled_geckodriver()
+        if geckodriver_path:
+            service = Service(executable_path=geckodriver_path)
+            driver = webdriver.Firefox(options=options, service=service)
+        else:
+            driver = webdriver.Firefox(options=options)
+
+        wait = WebDriverWait(driver, 30)
+
+        # Give browser a moment to stabilize before maximizing
+        self.interruptible_sleep(1)
+
+        # Verify browser is still alive before maximizing
+        try:
+            _ = driver.current_url
+            driver.maximize_window()
+        except Exception as max_err:
+            self.log(f"Browser window unavailable: {max_err}", "WARNING")
+            self.log("Browser may have closed unexpectedly. Retrying...", "WARNING")
+            try:
+                driver.quit()
+            except:
+                pass
+            raise Exception("Browser closed unexpectedly after start. Please ensure Firefox is not already running and try again.")
+
+        return driver, wait
 
     def setup_browser(self):
         """Setup Firefox browser with existing profile to use installed P12 certificate"""
@@ -510,75 +597,13 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
         else:
             self.log("Could not find Firefox profile. Certificate authentication may fail.", "WARNING")
 
-        # Set preferences for certificate handling based on auth method
-        if self.auth_method == "Soft Token (Select Certificate)":
-            # Allow user to select which certificate to use (for multiple users on same Mac)
-            options.set_preference("security.default_personal_cert", "Ask Every Time")
-            self.log("Certificate selection: User will be prompted to select certificate")
-        else:
-            # Auto-select certificate (for hardware token)
-            options.set_preference("security.default_personal_cert", "Select Automatically")
-        options.set_preference("webdriver_accept_untrusted_certs", True)
-        options.set_preference("accept_untrusted_certs", True)
-        options.set_preference("marionette.port", 0)
-
-        # Additional SSL/TLS preferences for government sites
-        options.set_preference("security.enterprise_roots.enabled", True)  # Trust system CA certs
-        options.set_preference("security.cert_pinning.enforcement_level", 0)  # Disable cert pinning
-        options.set_preference("security.mixed_content.block_active_content", False)
-        options.set_preference("security.ssl.enable_ocsp_stapling", False)  # Skip OCSP if problematic
-        options.set_preference("network.stricttransportsecurity.preloadlist", False)
-        options.set_preference("security.tls.version.min", 1)  # Allow TLS 1.0+ for older gov systems
-        options.set_preference("security.ssl.require_safe_negotiation", False)
-
-        # Increase timeouts for hardware token PIN entry
-        options.set_preference("network.http.connection-timeout", 90)
-        options.set_preference("network.http.response.timeout", 90)
-        options.set_preference("security.OCSP.timeoutMilliseconds.hard", 30000)
-
-        # PKCS#11 module handling for hardware tokens (SafeNet eToken)
-        options.set_preference("security.osclientcerts.autoload", True)
-        options.set_preference("security.remember_cert_checkbox_default_setting", False)
-
-        # Disable caching that can interfere with hardware tokens
-        options.set_preference("browser.cache.disk.enable", False)
-        options.set_preference("browser.cache.memory.enable", False)
-        options.set_preference("browser.cache.offline.enable", False)
-        options.set_preference("network.http.use-cache", False)
+        self._apply_firefox_preferences(options)
 
         # Initialize Firefox driver
         self.log("Starting Firefox...")
 
         try:
-            # Check for bundled geckodriver
-            geckodriver_path = get_bundled_geckodriver()
-            if geckodriver_path:
-                service = Service(executable_path=geckodriver_path)
-                self.driver = webdriver.Firefox(options=options, service=service)
-            else:
-                # Try system geckodriver
-                self.driver = webdriver.Firefox(options=options)
-
-            self.wait = WebDriverWait(self.driver, 30)
-
-            # Give browser a moment to stabilize before maximizing
-            self.interruptible_sleep(1)
-
-            # Verify browser is still alive before maximizing
-            try:
-                _ = self.driver.current_url  # Test if browser context is valid
-                self.driver.maximize_window()
-            except Exception as max_err:
-                # Browser may have closed (certificate dialog dismissed, etc.)
-                self.log(f"Browser window unavailable: {max_err}", "WARNING")
-                self.log("Browser may have closed unexpectedly. Retrying...", "WARNING")
-                # Clean up and raise to trigger retry at higher level
-                try:
-                    self.driver.quit()
-                except:
-                    pass
-                self.driver = None
-                raise Exception("Browser closed unexpectedly after start. Please ensure Firefox is not already running and try again.")
+            self.driver, self.wait = self._launch_firefox(options)
 
             self.log("Firefox started successfully", "SUCCESS")
             # Allow initialization based on auth method
@@ -591,6 +616,40 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
 
         except Exception as e:
             error_msg = str(e)
+
+            # Detect Firefox already running (profile locked)
+            if "Process unexpectedly closed with status 0" in error_msg and not self._temp_profile_dir:
+                self.log("Firefox is already running. Copying profile for automation...", "WARNING")
+                try:
+                    original_profile = self.firefox_profile_path or find_firefox_profile()
+                    if original_profile:
+                        temp_profile = self._copy_profile_to_temp(original_profile)
+                        self._temp_profile_dir = temp_profile
+                        self.log(f"Profile copied to temp directory")
+
+                        # Rebuild options with temp profile
+                        options = Options()
+                        options.add_argument("-profile")
+                        options.add_argument(temp_profile)
+                        self._apply_firefox_preferences(options)
+
+                        # Retry browser launch
+                        self.log("Retrying Firefox with copied profile...")
+                        self.driver, self.wait = self._launch_firefox(options)
+
+                        self.log("Firefox started successfully (using profile copy)", "SUCCESS")
+                        if self.auth_method == "Thales Token (Hardware)":
+                            self.log("Waiting for SafeNet eToken to initialize...")
+                            self.interruptible_sleep(3)
+                        else:
+                            self.log("Ready for certificate selection...")
+                            self.interruptible_sleep(1)
+                        return  # Success — exit setup_browser
+                except Exception as retry_err:
+                    self.log(f"Retry with copied profile also failed: {retry_err}", "ERROR")
+                    # Fall through to original error handling below
+
+            # Original error handling
             self.log(f"Error starting Firefox: {e}", "ERROR")
             if "Browsing context has been discarded" in error_msg or "Browser closed unexpectedly" in error_msg:
                 self.log("Troubleshooting:", "INFO")
@@ -2412,7 +2471,7 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             return 0
 
     def close_browser(self):
-        """Close the browser"""
+        """Close the browser and clean up temp profile if used"""
         if self.driver:
             try:
                 self.driver.quit()
@@ -2420,6 +2479,15 @@ NSS=Flags=optimizeSpace slotParams=(1={{slotFlags=[RSA,ECC] askpw=any timeout=30
             except:
                 pass
             self.driver = None
+        # Clean up temp profile directory
+        if self._temp_profile_dir:
+            try:
+                temp_base = os.path.dirname(self._temp_profile_dir)
+                shutil.rmtree(temp_base, ignore_errors=True)
+                self.log("Temp profile cleaned up")
+                self._temp_profile_dir = None
+            except:
+                pass
 
     def update_callbacks(self, log_callback=None, progress_callback=None, cancel_event=None, auth_method=None):
         """

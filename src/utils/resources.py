@@ -18,7 +18,21 @@ def get_base_path():
 
 
 def get_gif_path():
-    """Get the path to the loading GIF with fallback options"""
+    """Get the path to the loading GIF with fallback options.
+    Checks for user-configured custom GIF first."""
+    # Check for custom GIF set by user
+    try:
+        from .settings import get_custom_gif
+    except ImportError:
+        try:
+            from utils.settings import get_custom_gif
+        except ImportError:
+            get_custom_gif = None
+    if get_custom_gif:
+        custom = get_custom_gif()
+        if custom:
+            return custom
+
     base_path = get_base_path()
 
     # Primary location
@@ -52,6 +66,23 @@ def get_gif_path():
 
     # Return original path (will cause controlled error in app.py)
     return gif_path
+
+
+def get_logo_path():
+    """Get the path to the PNPKI logo"""
+    base_path = get_base_path()
+    logo_path = os.path.join(base_path, 'assets', 'logo.png')
+    if os.path.exists(logo_path):
+        return logo_path
+    # Fallback search
+    search_paths = [
+        os.path.join(os.path.dirname(__file__), '..', 'assets', 'logo.png'),
+    ]
+    for path in search_paths:
+        normalized = os.path.normpath(path)
+        if os.path.exists(normalized):
+            return normalized
+    return logo_path
 
 
 def resource_exists(resource_name):

@@ -91,3 +91,18 @@ def set_auth_method(method):
     settings = load_settings()
     settings["auth_method"] = method
     save_settings(settings)
+
+
+def get_custom_gif():
+    """Get the custom GIF path from settings (None if not set)"""
+    path = load_settings().get("custom_gif", "")
+    if path and os.path.exists(path):
+        return path
+    return None
+
+
+def set_custom_gif(path):
+    """Set a custom GIF path in settings (empty string to reset)"""
+    settings = load_settings()
+    settings["custom_gif"] = path if path else ""
+    save_settings(settings)

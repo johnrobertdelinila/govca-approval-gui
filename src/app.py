@@ -1,5 +1,5 @@
 """
-GovCA Approval Automation - Main GUI Application
+PNPKI Approval Automation - Main GUI Application
 Built with CustomTkinter for a modern, cross-platform look.
 Enhanced with elegant design, resizable panels, and responsive layout.
 """
@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import ttk
 import sys
 import os
+import subprocess
 from PIL import Image, ImageTk
 
 # Handle imports for both package and direct execution
@@ -18,14 +19,14 @@ try:
     from .logging_handler import LogBuffer, ProgressTracker
     from .core.bot import GovCAApprovalBot, OperationCancelledException
     from .core.browser import check_firefox_installed, check_geckodriver_available, find_firefox_profile
-    from .utils.settings import get_default_domain, set_default_domain, DOMAIN_LIST, AUTH_METHODS, get_auth_method, set_auth_method
-    from .utils.resources import get_gif_path
+    from .utils.settings import get_default_domain, set_default_domain, DOMAIN_LIST, AUTH_METHODS, get_auth_method, set_auth_method, get_custom_gif, set_custom_gif
+    from .utils.resources import get_gif_path, get_logo_path
 except ImportError:
     from logging_handler import LogBuffer, ProgressTracker
     from core.bot import GovCAApprovalBot, OperationCancelledException
     from core.browser import check_firefox_installed, check_geckodriver_available, find_firefox_profile
-    from utils.settings import get_default_domain, set_default_domain, DOMAIN_LIST, AUTH_METHODS, get_auth_method, set_auth_method
-    from utils.resources import get_gif_path
+    from utils.settings import get_default_domain, set_default_domain, DOMAIN_LIST, AUTH_METHODS, get_auth_method, set_auth_method, get_custom_gif, set_custom_gif
+    from utils.resources import get_gif_path, get_logo_path
 
 # Set appearance mode to system default
 ctk.set_appearance_mode("system")
@@ -372,7 +373,7 @@ class SettingsDialog(ctk.CTkToplevel):
     def __init__(self, parent, current_domain, current_auth, on_save):
         super().__init__(parent)
         self.title("Settings")
-        self.geometry("350x300")
+        self.geometry("400x420")
         self.resizable(False, False)
 
         # Make modal
@@ -381,6 +382,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         # Store callback
         self.on_save = on_save
+        self.custom_gif_path = get_custom_gif() or ""
 
         # Center on parent
         self.update_idletasks()
@@ -388,8 +390,8 @@ class SettingsDialog(ctk.CTkToplevel):
         parent_y = parent.winfo_y()
         parent_width = parent.winfo_width()
         parent_height = parent.winfo_height()
-        dialog_width = 350
-        dialog_height = 300
+        dialog_width = 400
+        dialog_height = 420
         x = parent_x + (parent_width - dialog_width) // 2
         y = parent_y + (parent_height - dialog_height) // 2
         self.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
@@ -453,6 +455,54 @@ class SettingsDialog(ctk.CTkToplevel):
         self.auth_dropdown.set(current_auth)
         self.auth_dropdown.pack(pady=(0, 15))
 
+        # Custom Animation
+        ctk.CTkLabel(
+            container,
+            text="Custom Animation (GIF)",
+            font=Typography.heading_sm(),
+            text_color=ColorPalette.get('text_primary')
+        ).pack(anchor="w", pady=(0, 6))
+
+        gif_row = ctk.CTkFrame(container, fg_color="transparent")
+        gif_row.pack(fill="x", pady=(0, 4))
+
+        self.gif_label = ctk.CTkLabel(
+            gif_row,
+            text=os.path.basename(self.custom_gif_path) if self.custom_gif_path else "Default animation",
+            font=Typography.body_sm(),
+            text_color=ColorPalette.get('text_secondary'),
+            anchor="w",
+            width=180
+        )
+        self.gif_label.pack(side="left", fill="x", expand=True)
+
+        browse_btn = ctk.CTkButton(
+            gif_row,
+            text="Browse",
+            width=70,
+            height=30,
+            font=Typography.body_sm(),
+            fg_color=ColorPalette.get('accent_primary'),
+            hover_color=ColorPalette.get('accent_secondary'),
+            corner_radius=6,
+            command=self._browse_gif
+        )
+        browse_btn.pack(side="left", padx=(6, 0))
+
+        reset_btn = ctk.CTkButton(
+            gif_row,
+            text="Reset",
+            width=60,
+            height=30,
+            font=Typography.body_sm(),
+            fg_color=ColorPalette.get('border'),
+            hover_color=ColorPalette.get('border_light'),
+            text_color=ColorPalette.get('text_primary'),
+            corner_radius=6,
+            command=self._reset_gif
+        )
+        reset_btn.pack(side="left", padx=(6, 0))
+
         # Domain note
         note_label = ctk.CTkLabel(
             container,
@@ -461,13 +511,13 @@ class SettingsDialog(ctk.CTkToplevel):
             text_color=ColorPalette.get('text_muted'),
             justify="left"
         )
-        note_label.pack(anchor="w", pady=(0, 20))
+        note_label.pack(anchor="w", pady=(0, 15))
 
         # Save & Close button
         save_btn = ctk.CTkButton(
             container,
             text="Save & Close",
-            width=310,
+            width=360,
             height=40,
             font=Typography.heading_sm(),
             fg_color=ColorPalette.get('accent_primary'),
@@ -477,10 +527,29 @@ class SettingsDialog(ctk.CTkToplevel):
         )
         save_btn.pack()
 
+    def _browse_gif(self):
+        """Open file dialog to select a custom GIF"""
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            parent=self,
+            title="Select Animation GIF",
+            filetypes=[("GIF files", "*.gif"), ("All files", "*.*")]
+        )
+        if path:
+            self.custom_gif_path = path
+            self.gif_label.configure(text=os.path.basename(path))
+
+    def _reset_gif(self):
+        """Reset to default animation"""
+        self.custom_gif_path = ""
+        self.gif_label.configure(text="Default animation")
+
     def _save_and_close(self):
         """Save settings and close dialog"""
         domain = self.domain_dropdown.get()
         auth_method = self.auth_dropdown.get()
+        # Save custom GIF setting
+        set_custom_gif(self.custom_gif_path)
         self.on_save(domain, auth_method)
         self.destroy()
 
@@ -538,7 +607,7 @@ class GovCAApp(ctk.CTk):
         super().__init__()
 
         # Window setup
-        self.title("GovCA Approval Automation")
+        self.title("PNPKI Approval Automation")
         self.geometry("950x800")
         self.minsize(800, 700)
 
@@ -637,7 +706,7 @@ class GovCAApp(ctk.CTk):
 
         # Main container with padding
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_frame.pack(fill="both", expand=True, padx=16, pady=12)
+        self.main_frame.pack(fill="both", expand=True, padx=16, pady=8)
 
         # Title Section
         self._create_title_section(self.main_frame)
@@ -647,7 +716,7 @@ class GovCAApp(ctk.CTk):
 
         # Bottom frame FIRST (so it reserves space at bottom for buttons)
         bottom_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        bottom_frame.pack(fill="x", side="bottom", pady=(10, 0))
+        bottom_frame.pack(fill="x", side="bottom", pady=(6, 0))
 
         # Control Buttons and Progress (inside bottom_frame)
         self._create_control_buttons(bottom_frame)
@@ -655,7 +724,7 @@ class GovCAApp(ctk.CTk):
 
         # THEN the resizable paned window (fills remaining space)
         self.main_paned = ResizablePanedWindow(self.main_frame, orient=tk.VERTICAL)
-        self.main_paned.pack(fill="both", expand=True, pady=(0, 10))
+        self.main_paned.pack(fill="both", expand=True, pady=(0, 6))
 
         # Configuration pane (upper)
         self.config_pane = ctk.CTkFrame(self.main_paned, fg_color=ColorPalette.get('bg_card'), corner_radius=12)
@@ -673,7 +742,7 @@ class GovCAApp(ctk.CTk):
     def _create_title_section(self, parent):
         """Create title section with domain indicator and settings button"""
         title_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        title_frame.pack(fill="x", pady=(0, 10))
+        title_frame.pack(fill="x", pady=(0, 6))
 
         # LEFT: Domain indicator
         left_frame = ctk.CTkFrame(title_frame, fg_color="transparent")
@@ -698,14 +767,31 @@ class GovCAApp(ctk.CTk):
         center_frame = ctk.CTkFrame(title_frame, fg_color="transparent")
         center_frame.pack(side="left", expand=True)
 
+        # Logo + Title together
+        logo_title_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
+        logo_title_frame.pack()
+
+        # Load PNPKI logo
+        try:
+            logo_path = get_logo_path()
+            logo_img = Image.open(logo_path)
+            # Scale to 40px height, maintain aspect ratio
+            aspect = logo_img.width / logo_img.height
+            logo_size = (int(40 * aspect), 40)
+            self.logo_image = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=logo_size)
+            logo_label = ctk.CTkLabel(logo_title_frame, image=self.logo_image, text="")
+            logo_label.pack(side="left", padx=(0, 8))
+        except Exception:
+            pass  # No logo if file missing
+
         # Main title
         title_label = ctk.CTkLabel(
-            center_frame,
-            text="GovCA Approval Automation",
+            logo_title_frame,
+            text="PNPKI Approval Automation",
             font=Typography.heading_xl(),
             text_color=ColorPalette.get('text_primary')
         )
-        title_label.pack()
+        title_label.pack(side="left")
 
         # Subtitle
         subtitle_label = ctk.CTkLabel(
@@ -740,7 +826,7 @@ class GovCAApp(ctk.CTk):
     def _create_workflow_section(self, parent):
         """Create workflow selection section with card-style buttons"""
         section_frame = CardFrame(parent)
-        section_frame.pack(fill="x", pady=(0, 6))
+        section_frame.pack(fill="x", pady=(0, 4))
 
         # Header
         header = ctk.CTkLabel(
@@ -749,11 +835,11 @@ class GovCAApp(ctk.CTk):
             font=Typography.section_header(),
             text_color=ColorPalette.get('text_muted')
         )
-        header.pack(anchor="w", padx=15, pady=(4, 2))
+        header.pack(anchor="w", padx=15, pady=(3, 1))
 
         # Workflow buttons container
         buttons_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
-        buttons_frame.pack(fill="x", padx=15, pady=(0, 4))
+        buttons_frame.pack(fill="x", padx=15, pady=(0, 3))
         buttons_frame.grid_columnconfigure((0, 1, 2), weight=1, uniform="workflow")
 
         workflows = [
@@ -774,11 +860,11 @@ class GovCAApp(ctk.CTk):
                 border_width=2,
                 border_color=ColorPalette.get('accent_primary') if value == "1" else ColorPalette.get('border')
             )
-            btn_container.grid(row=0, column=i, padx=4, pady=3, sticky="nsew")
+            btn_container.grid(row=0, column=i, padx=4, pady=2, sticky="nsew")
 
             # Inner content
             inner = ctk.CTkFrame(btn_container, fg_color="transparent")
-            inner.pack(expand=True, fill="both", padx=6, pady=5)
+            inner.pack(expand=True, fill="both", padx=6, pady=3)
 
             # Title
             title_lbl = ctk.CTkLabel(
@@ -796,7 +882,7 @@ class GovCAApp(ctk.CTk):
                 font=Typography.body_sm(),
                 text_color="#e5e7eb" if value == "1" else ColorPalette.get('text_secondary')
             )
-            subtitle_lbl.pack(pady=(1, 0))
+            subtitle_lbl.pack(pady=(0, 0))
 
             # Make entire frame clickable
             for widget in [btn_container, inner, title_lbl, subtitle_lbl]:
@@ -852,7 +938,7 @@ class GovCAApp(ctk.CTk):
         """Create configuration section with OPTIONS only (settings moved to dialog)"""
         # Config container (scrollable)
         config_container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        config_container.pack(fill="both", expand=True, padx=10, pady=(6, 6))
+        config_container.pack(fill="both", expand=True, padx=10, pady=(4, 4))
 
         # ============ OPTIONS SECTION ============
         options_frame = ctk.CTkFrame(config_container, fg_color=ColorPalette.get('bg_secondary'), corner_radius=8)
@@ -1181,6 +1267,8 @@ class GovCAApp(ctk.CTk):
         set_default_domain(domain)
         set_auth_method(auth_method)
         self._update_domain_indicator()
+        # Reload GIF in case custom animation changed
+        self._load_gif_frames()
 
     def _update_domain_indicator(self):
         """Update domain indicator label"""
@@ -1823,6 +1911,67 @@ class GovCAApp(ctk.CTk):
             self.log_text.configure(state="disabled")
             self.log_buffer.clear()
 
+    def _notify_user(self, success=True):
+        """Send system notification and request attention when automation finishes"""
+        try:
+            if sys.platform == "darwin":
+                # macOS: system notification
+                title = "PNPKI Approval Automation"
+                msg = "Workflow completed successfully!" if success else "Workflow finished with errors."
+                subprocess.Popen([
+                    "osascript", "-e",
+                    f'display notification "{msg}" with title "{title}" sound name "default"'
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Bounce dock icon (request user attention)
+                subprocess.Popen([
+                    "osascript", "-e",
+                    'tell application "System Events" to set frontmost of the first process '
+                    'whose unix id is (do shell script "echo $PPID") to false'
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif sys.platform == "win32":
+                # Windows: toast notification via PowerShell
+                title = "PNPKI Approval Automation"
+                msg = "Workflow completed successfully!" if success else "Workflow finished with errors."
+                ps_script = (
+                    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+                    "ContentType = WindowsRuntime] > $null; "
+                    "$template = [Windows.UI.Notifications.ToastNotificationManager]::"
+                    "GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+                    "$textNodes = $template.GetElementsByTagName('text'); "
+                    f"$textNodes.Item(0).AppendChild($template.CreateTextNode('{title}')) > $null; "
+                    f"$textNodes.Item(1).AppendChild($template.CreateTextNode('{msg}')) > $null; "
+                    "$toast = [Windows.UI.Notifications.ToastNotification]::new($template); "
+                    "[Windows.UI.Notifications.ToastNotificationManager]::"
+                    "CreateToastNotifier('PNPKI Approval').Show($toast)"
+                )
+                subprocess.Popen(
+                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=0x08000000  # CREATE_NO_WINDOW
+                )
+                # Flash taskbar
+                try:
+                    import ctypes
+                    ctypes.windll.user32.FlashWindow(
+                        ctypes.windll.kernel32.GetConsoleWindow(), True
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Cross-platform: system bell as fallback
+        try:
+            self.bell()
+        except Exception:
+            pass
+        # Bring window to front
+        try:
+            self.lift()
+            self.attributes("-topmost", True)
+            self.after(1000, lambda: self.attributes("-topmost", False))
+        except Exception:
+            pass
+
     def _poll_updates(self):
         """Poll for log and progress updates from automation thread"""
         try:
@@ -1873,12 +2022,17 @@ class GovCAApp(ctk.CTk):
                 self._update_button_states()
                 self.progress_bar.set_animated(1 if current > 0 else 0)
 
+                # Check if there were errors in the log
+                has_errors = "ERROR" in self.log_text.get("1.0", "end")
+
                 # Stop animation and show result
                 if was_running and not self.logs_visible:
                     self._stop_animation()
-                    # Check if there were errors in the log
-                    has_errors = "ERROR" in self.log_text.get("1.0", "end")
                     self._show_result(success=not has_errors)
+
+                # Notify user (system notification + dock bounce / taskbar flash)
+                if was_running:
+                    self._notify_user(success=not has_errors)
 
                 # Update session status after workflow completes
                 self._update_session_status()
@@ -2093,6 +2247,7 @@ class GovCAApp(ctk.CTk):
             if not self.logs_visible:
                 self._stop_animation()
                 self._show_result(success=False)
+            self._notify_user(success=False)
             self._update_session_status()
 
     def _cancel_escalation_timers(self):

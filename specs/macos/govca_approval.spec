@@ -91,11 +91,11 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='GovCAApproval.app',
-    icon=None,
+    icon=os.path.join(project_root, 'src', 'assets', 'AppIcon.icns'),
     bundle_identifier='com.govca.approval',
     info_plist={
         'CFBundleName': 'GovCA Approval',
-        'CFBundleDisplayName': 'GovCA Approval Automation',
+        'CFBundleDisplayName': 'PNPKI Approval Automation',
         'CFBundleVersion': '1.0.0',
         'CFBundleShortVersionString': '1.0.0',
         'NSHighResolutionCapable': True,
