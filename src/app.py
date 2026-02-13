@@ -677,6 +677,7 @@ class GovCAApp(ctk.CTk):
         self.animation_frame_index = 0
         self.animation_after_id = None
         self._sash_anim_id = None
+        self._wf_anim_id = None
         self.gif_frames = []  # GIF animation frames
         self.gif_target_size = (300, 188)
 
@@ -999,16 +1000,62 @@ class GovCAApp(ctk.CTk):
 
     def _toggle_workflow_section(self):
         """Toggle workflow section between expanded and collapsed states"""
-        self.workflow_collapsed = not self.workflow_collapsed
-        if self.workflow_collapsed:
-            self.workflow_buttons_frame.pack_forget()
-            self._update_workflow_summary()
-            self.workflow_summary_label.pack(fill="x", padx=15, pady=(0, 6))
+        self._animate_workflow_section(not self.workflow_collapsed)
+
+    def _animate_workflow_section(self, collapse, duration=250):
+        """Smoothly collapse or expand the workflow section."""
+        if collapse == self.workflow_collapsed:
+            return
+        if self._wf_anim_id:
+            self.after_cancel(self._wf_anim_id)
+            self._wf_anim_id = None
+
+        self.workflow_collapsed = collapse
+
+        if collapse:
             self.workflow_chevron.configure(text="▶")
+            self._update_workflow_summary()
+            h = self.workflow_buttons_frame.winfo_height()
+            if h <= 1:
+                h = self.workflow_buttons_frame.winfo_reqheight()
+            self.workflow_buttons_frame.pack_propagate(False)
+            self._wf_anim_start_h = h
+            self._wf_anim_target_h = 0
         else:
+            self.workflow_chevron.configure(text="▼")
             self.workflow_summary_label.pack_forget()
             self.workflow_buttons_frame.pack(fill="x", padx=15, pady=(0, 3))
-            self.workflow_chevron.configure(text="▼")
+            self.workflow_buttons_frame.update_idletasks()
+            natural_h = self.workflow_buttons_frame.winfo_reqheight()
+            self.workflow_buttons_frame.pack_propagate(False)
+            self.workflow_buttons_frame.configure(height=1)
+            self._wf_anim_start_h = 1
+            self._wf_anim_target_h = natural_h
+
+        self._wf_anim_step = 0
+        self._wf_anim_steps = max(1, duration // 16)
+        self._wf_anim_collapsing = collapse
+        self._wf_anim_tick()
+
+    def _wf_anim_tick(self):
+        """Single frame of workflow section animation with ease-out."""
+        self._wf_anim_step += 1
+        t = self._wf_anim_step / self._wf_anim_steps
+        t = 1 - (1 - t) ** 2  # ease-out quad
+        h = int(self._wf_anim_start_h + (self._wf_anim_target_h - self._wf_anim_start_h) * t)
+        h = max(1, h)
+        try:
+            self.workflow_buttons_frame.configure(height=h)
+        except Exception:
+            return
+        if self._wf_anim_step < self._wf_anim_steps:
+            self._wf_anim_id = self.after(16, self._wf_anim_tick)
+        else:
+            self._wf_anim_id = None
+            self.workflow_buttons_frame.pack_propagate(True)
+            if self._wf_anim_collapsing:
+                self.workflow_buttons_frame.pack_forget()
+                self.workflow_summary_label.pack(fill="x", padx=15, pady=(0, 6))
 
     def _update_workflow_summary(self):
         """Update the collapsed workflow summary text"""
@@ -2427,6 +2474,7 @@ class GovCAApp(ctk.CTk):
                 # Auto-expand config pane so user can configure next run
                 if was_running:
                     self._animate_sash(180)
+                    self._animate_workflow_section(collapse=False)
 
                 # Notify user (system notification + dock bounce / taskbar flash)
                 if was_running:
@@ -2534,6 +2582,9 @@ class GovCAApp(ctk.CTk):
 
         # Auto-collapse config pane to give more room to animation/logs
         self._animate_sash(80)
+
+        # Auto-collapse workflow section since user doesn't need it during task
+        self._animate_workflow_section(collapse=True)
 
         # Reuse existing bot or create new one
         # Get auth method from saved settings
@@ -2664,6 +2715,7 @@ class GovCAApp(ctk.CTk):
                 self._show_result(success=False)
             # Auto-expand config pane so user can configure next run
             self._animate_sash(180)
+            self._animate_workflow_section(collapse=False)
             self._notify_user(success=False)
             self._update_session_status()
 
