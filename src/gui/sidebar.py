@@ -116,15 +116,77 @@ class SidebarFrame(ctk.CTkFrame):
         return badge, (total_w // scale, total_h // scale)
 
     def _build(self):
-        """Build sidebar layout."""
-        # === Hero Logo Section ===
+        """Build sidebar layout. Bottom section packed FIRST to guarantee visibility."""
+        # === Bottom Section (packed FIRST with side=bottom) ===
+        self._bottom_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self._bottom_frame.pack(side="bottom", fill="x")
+
+        self._bottom_divider = ctk.CTkFrame(
+            self._bottom_frame, height=1, fg_color=ColorPalette.get('divider')
+        )
+        self._bottom_divider.pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.SM))
+
+        self.settings_btn = ctk.CTkButton(
+            self._bottom_frame,
+            text="\u2699  Settings",
+            width=self.SIDEBAR_WIDTH - 32,
+            height=32,
+            font=Typography.body_sm(),
+            fg_color="transparent",
+            hover_color=ColorPalette.get('bg_hover'),
+            text_color=ColorPalette.get('text_secondary'),
+            anchor="w",
+            corner_radius=Radius.SM,
+            command=self._handle_settings_click,
+        )
+        self.settings_btn.pack(padx=Spacing.LG, pady=(0, Spacing.XS))
+
+        self.theme_btn = ctk.CTkButton(
+            self._bottom_frame,
+            text=_THEME_DISPLAY.get(self._current_theme_mode, "\u25d0  Auto"),
+            width=self.SIDEBAR_WIDTH - 32,
+            height=32,
+            font=Typography.body_sm(),
+            fg_color="transparent",
+            hover_color=ColorPalette.get('bg_hover'),
+            text_color=ColorPalette.get('text_secondary'),
+            anchor="w",
+            corner_radius=Radius.SM,
+            command=self._cycle_theme,
+        )
+        self.theme_btn.pack(padx=Spacing.LG, pady=(0, Spacing.SM))
+
+        self.session_frame = ctk.CTkFrame(self._bottom_frame, fg_color="transparent")
+        self.session_frame.pack(fill="x", padx=18, pady=(0, Spacing.XS))
+
+        self.session_dot = ctk.CTkFrame(
+            self.session_frame, width=6, height=6,
+            corner_radius=3, fg_color=ColorPalette.get('text_muted'),
+        )
+        self.session_dot.pack(side="left", padx=(0, Spacing.SM))
+
+        self.session_label = ctk.CTkLabel(
+            self.session_frame, text="No Session",
+            font=Typography.body_sm(),
+            text_color=ColorPalette.get('text_muted'),
+        )
+        self.session_label.pack(side="left")
+
+        self._version_label = ctk.CTkLabel(
+            self._bottom_frame, text="v1.0.0",
+            font=Typography.body_sm(),
+            text_color=ColorPalette.get('text_muted'),
+        )
+        self._version_label.pack(anchor="w", padx=18, pady=(2, Spacing.MD))
+
+        # === Hero Logo Section (top content) ===
         logo_section = ctk.CTkFrame(self, fg_color="transparent")
         logo_section.pack(fill="x", padx=Spacing.LG, pady=(Spacing.LG, Spacing.SM))
 
         try:
             logo_path = get_logo_path()
             logo_img = Image.open(logo_path)
-            badge_img, (disp_w, disp_h) = self._create_logo_badge(logo_img)
+            badge_img, (disp_w, disp_h) = self._create_logo_badge(logo_img, display_width=110)
             self._logo_image = ctk.CTkImage(
                 light_image=badge_img, dark_image=badge_img,
                 size=(disp_w, disp_h),
@@ -136,34 +198,33 @@ class SidebarFrame(ctk.CTkFrame):
         except Exception:
             pass
 
-        # App name — centered
-        ctk.CTkLabel(
-            logo_section,
-            text="PNPKI",
+        self._app_name_label = ctk.CTkLabel(
+            logo_section, text="PNPKI",
             font=Typography.heading_lg(),
-            text_color="#ffffff",
-        ).pack(anchor="center", pady=(Spacing.SM, 0))
+            text_color=ColorPalette.get('text_primary'),
+        )
+        self._app_name_label.pack(anchor="center", pady=(Spacing.SM, 0))
 
-        # Subtitle — centered
-        ctk.CTkLabel(
-            logo_section,
-            text="Approval Automation",
+        self._subtitle_label = ctk.CTkLabel(
+            logo_section, text="Approval Automation",
             font=Typography.body_sm(),
             text_color=ColorPalette.get('text_muted'),
-        ).pack(anchor="center", pady=(2, 0))
+        )
+        self._subtitle_label.pack(anchor="center", pady=(2, 0))
 
         # === Divider after logo ===
-        ctk.CTkFrame(
+        self._divider_1 = ctk.CTkFrame(
             self, height=1, fg_color=ColorPalette.get('divider')
-        ).pack(fill="x", padx=Spacing.LG, pady=(Spacing.MD, Spacing.MD))
+        )
+        self._divider_1.pack(fill="x", padx=Spacing.LG, pady=(Spacing.MD, Spacing.MD))
 
         # === Domain Section ===
-        ctk.CTkLabel(
-            self,
-            text="DOMAIN",
+        self._domain_label = ctk.CTkLabel(
+            self, text="DOMAIN",
             font=Typography.section_header(),
             text_color=ColorPalette.get('text_muted'),
-        ).pack(anchor="w", padx=Spacing.LG, pady=(0, Spacing.SM))
+        )
+        self._domain_label.pack(anchor="w", padx=Spacing.LG, pady=(0, Spacing.SM))
 
         self.domain_dropdown = ctk.CTkComboBox(
             self,
@@ -179,16 +240,14 @@ class SidebarFrame(ctk.CTkFrame):
             fg_color=ColorPalette.get('bg_sidebar_item'),
             button_color=ColorPalette.get('accent_primary'),
             button_hover_color=ColorPalette.get('accent_secondary'),
-            text_color="#ffffff",
+            text_color=ColorPalette.get('text_primary'),
             command=self._handle_domain_change,
         )
         self.domain_dropdown.set(get_default_domain())
         self.domain_dropdown.pack(padx=Spacing.LG, pady=(0, Spacing.XS))
 
-        # Counterpart indicator
         self.counterpart_label = ctk.CTkLabel(
-            self,
-            text="",
+            self, text="",
             font=Typography.sidebar_description(),
             text_color=ColorPalette.get('text_muted'),
         )
@@ -196,93 +255,27 @@ class SidebarFrame(ctk.CTkFrame):
         self._update_counterpart_indicator()
 
         # === Divider ===
-        ctk.CTkFrame(
+        self._divider_2 = ctk.CTkFrame(
             self, height=1, fg_color=ColorPalette.get('divider')
-        ).pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.MD))
+        )
+        self._divider_2.pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.MD))
 
-        # === Workflow Section Label ===
-        ctk.CTkLabel(
-            self,
-            text="WORKFLOWS",
+        # === Workflow Section ===
+        self._workflow_label = ctk.CTkLabel(
+            self, text="WORKFLOWS",
             font=Typography.section_header(),
             text_color=ColorPalette.get('text_muted'),
-        ).pack(anchor="w", padx=Spacing.LG, pady=(0, Spacing.SM))
+        )
+        self._workflow_label.pack(anchor="w", padx=Spacing.LG, pady=(0, Spacing.SM))
 
-        # === Workflow Navigation ===
         self._workflow_container = ctk.CTkFrame(self, fg_color="transparent")
         self._workflow_container.pack(fill="x", padx=10)
 
         for wf in WORKFLOWS:
             self._create_workflow_item(wf)
 
-        # === Spacer ===
-        spacer = ctk.CTkFrame(self, fg_color="transparent")
-        spacer.pack(fill="both", expand=True)
-
-        # === Bottom Section ===
-        ctk.CTkFrame(
-            self, height=1, fg_color=ColorPalette.get('divider')
-        ).pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.SM))
-
-        # Settings button
-        self.settings_btn = ctk.CTkButton(
-            self,
-            text="\u2699  Settings",
-            width=self.SIDEBAR_WIDTH - 32,
-            height=32,
-            font=Typography.body_sm(),
-            fg_color="transparent",
-            hover_color=ColorPalette.get('bg_hover'),
-            text_color=ColorPalette.get('text_secondary'),
-            anchor="w",
-            corner_radius=Radius.SM,
-            command=self._handle_settings_click,
-        )
-        self.settings_btn.pack(padx=Spacing.LG, pady=(0, Spacing.XS))
-
-        # Theme toggle button
-        self.theme_btn = ctk.CTkButton(
-            self,
-            text=_THEME_DISPLAY.get(self._current_theme_mode, "\u25d0  Auto"),
-            width=self.SIDEBAR_WIDTH - 32,
-            height=32,
-            font=Typography.body_sm(),
-            fg_color="transparent",
-            hover_color=ColorPalette.get('bg_hover'),
-            text_color=ColorPalette.get('text_secondary'),
-            anchor="w",
-            corner_radius=Radius.SM,
-            command=self._cycle_theme,
-        )
-        self.theme_btn.pack(padx=Spacing.LG, pady=(0, Spacing.SM))
-
-        # Session indicator with CTkFrame dot
-        self.session_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.session_frame.pack(fill="x", padx=18, pady=(0, Spacing.XS))
-
-        self.session_dot = ctk.CTkFrame(
-            self.session_frame,
-            width=6, height=6,
-            corner_radius=3,
-            fg_color=ColorPalette.get('text_muted'),
-        )
-        self.session_dot.pack(side="left", padx=(0, Spacing.SM))
-
-        self.session_label = ctk.CTkLabel(
-            self.session_frame,
-            text="No Session",
-            font=Typography.body_sm(),
-            text_color=ColorPalette.get('text_muted'),
-        )
-        self.session_label.pack(side="left")
-
-        # Version
-        ctk.CTkLabel(
-            self,
-            text="v1.0.0",
-            font=Typography.body_sm(),
-            text_color=ColorPalette.get('text_muted'),
-        ).pack(anchor="w", padx=18, pady=(2, Spacing.MD))
+        # === Spacer (absorbs remaining space between top and bottom) ===
+        ctk.CTkFrame(self, fg_color="transparent").pack(fill="both", expand=True)
 
         # Apply initial selection
         self._apply_selection("1")
@@ -384,7 +377,7 @@ class SidebarFrame(ctk.CTkFrame):
             text_frame,
             text=wf["title"],
             font=Typography.sidebar_item(),
-            text_color="#ffffff",
+            text_color=ColorPalette.get('text_primary'),
             anchor="w",
         )
         title_label.pack(anchor="w")
@@ -432,7 +425,7 @@ class SidebarFrame(ctk.CTkFrame):
                 widgets["accent_bar"].configure(fg_color=ColorPalette.get('sidebar_accent_bar'))
             else:
                 widgets["frame"].configure(fg_color="transparent")
-                widgets["title"].configure(text_color="#ffffff")
+                widgets["title"].configure(text_color=ColorPalette.get('text_primary'))
                 widgets["accent_bar"].configure(fg_color="transparent")
 
     def _on_hover(self, workflow_id, entering):
@@ -509,7 +502,7 @@ class SidebarFrame(ctk.CTkFrame):
         state = "disabled" if disabled else "readonly"
         self.domain_dropdown.configure(state=state)
         for wid, widgets in self._workflow_items.items():
-            opacity_color = ColorPalette.get('text_muted') if disabled else "#ffffff"
+            opacity_color = ColorPalette.get('text_muted') if disabled else ColorPalette.get('text_primary')
             if wid != self._selected_workflow:
                 widgets["title"].configure(text_color=opacity_color)
 
@@ -529,14 +522,37 @@ class SidebarFrame(ctk.CTkFrame):
             )
 
     def update_colors(self):
-        """Refresh colors on theme change."""
+        """Refresh all sidebar colors on theme change."""
         self.configure(fg_color=ColorPalette.get('bg_sidebar'))
+
+        # Logo / branding text
+        self._app_name_label.configure(text_color=ColorPalette.get('text_primary'))
+        self._subtitle_label.configure(text_color=ColorPalette.get('text_muted'))
+
+        # Dividers
+        self._divider_1.configure(fg_color=ColorPalette.get('divider'))
+        self._divider_2.configure(fg_color=ColorPalette.get('divider'))
+        self._bottom_divider.configure(fg_color=ColorPalette.get('divider'))
+
+        # Section labels
+        self._domain_label.configure(text_color=ColorPalette.get('text_muted'))
+        self._workflow_label.configure(text_color=ColorPalette.get('text_muted'))
+
+        # Domain dropdown
         self.domain_dropdown.configure(
             border_color=ColorPalette.get('divider'),
             fg_color=ColorPalette.get('bg_sidebar_item'),
             button_color=ColorPalette.get('accent_primary'),
             button_hover_color=ColorPalette.get('accent_secondary'),
+            text_color=ColorPalette.get('text_primary'),
         )
+        self.counterpart_label.configure(text_color=ColorPalette.get('text_muted'))
+
+        # Workflow items
+        for wid, widgets in self._workflow_items.items():
+            widgets["description"].configure(text_color=ColorPalette.get('text_muted'))
+
+        # Bottom controls
         self.settings_btn.configure(
             hover_color=ColorPalette.get('bg_hover'),
             text_color=ColorPalette.get('text_secondary'),
@@ -545,5 +561,8 @@ class SidebarFrame(ctk.CTkFrame):
             hover_color=ColorPalette.get('bg_hover'),
             text_color=ColorPalette.get('text_secondary'),
         )
+        self._version_label.configure(text_color=ColorPalette.get('text_muted'))
+
+        # Re-apply selection (updates active/inactive title colors)
         self._apply_selection(self._selected_workflow)
         self._update_counterpart_indicator()

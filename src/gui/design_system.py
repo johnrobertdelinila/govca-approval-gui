@@ -105,14 +105,14 @@ class ColorPalette:
         'border':       '#e5e7eb',
         'border_light': '#d1d5db',
 
-        # Sidebar (stays dark in light mode too)
-        'bg_sidebar':             '#131620',
-        'bg_sidebar_item':        '#1c2030',
-        'bg_sidebar_item_active': '#1a2f50',
-        'bg_sidebar_item_hover':  '#1f2640',
-        'sidebar_accent_bar':     '#4f8ff7',
-        'bg_hover':               '#1f2640',
-        'divider':                '#2a2f3d',
+        # Sidebar (light-themed to match light mode)
+        'bg_sidebar':             '#eceef4',
+        'bg_sidebar_item':        '#e2e5ee',
+        'bg_sidebar_item_active': '#dbe1f2',
+        'bg_sidebar_item_hover':  '#e5e8f0',
+        'sidebar_accent_bar':     '#2563eb',
+        'bg_hover':               '#dfe2ea',
+        'divider':                '#d0d4de',
 
         # Badges
         'badge_bg':   '#dbeafe',
