@@ -106,3 +106,15 @@ def set_custom_gif(path):
     settings = load_settings()
     settings["custom_gif"] = path if path else ""
     save_settings(settings)
+
+
+def get_appearance_mode():
+    """Get appearance mode preference. Returns 'system', 'Dark', or 'Light'."""
+    return load_settings().get("appearance_mode", "system")
+
+
+def set_appearance_mode(mode):
+    """Persist appearance mode preference."""
+    settings = load_settings()
+    settings["appearance_mode"] = mode
+    save_settings(settings)
